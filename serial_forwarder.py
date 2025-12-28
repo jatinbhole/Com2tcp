@@ -385,7 +385,6 @@ class SinglePortForwarder:
 
 
 class MultiPortForwarder:
-class MultiPortForwarder:
     """Manages multiple serial port to TCP forwarders"""
     
     def __init__(self, config_file='config.json'):
