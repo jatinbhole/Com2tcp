@@ -5,7 +5,7 @@ Supports multiple serial ports with independent TCP forwarding
 Uses SQLite for persistent buffer storage
 
 Requirements:
-- Python 3.8 or higher
+- Python 3.8 only
 """
 import sys
 import serial
@@ -19,9 +19,9 @@ import logging
 from collections import deque
 from datetime import datetime
 
-# Check Python version
-if sys.version_info < (3, 8):
-    print("Error: Python 3.8 or higher is required")
+# Check Python version - 3.8 only
+if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
+    print("Error: Python 3.8 only is required")
     print(f"Current version: {sys.version}")
     sys.exit(1)
 

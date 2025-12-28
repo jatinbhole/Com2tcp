@@ -15,7 +15,7 @@ A robust Python application that forwards data from a serial port to a TCP conne
 
 ## Requirements
 
-- Python 3.7+
+- **Python 3.8 only** (Not compatible with Python 3.9+)
 - Serial port (e.g., `/dev/ttyUSB0`, `COM1`, etc.)
 - Target TCP server
 

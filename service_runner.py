@@ -3,6 +3,9 @@
 Unified Service Runner
 Runs both the Web Service (Flask) and Serial Forwarder as a single service
 Supports graceful shutdown with proper cleanup
+
+Requirements:
+- Python 3.8 only
 """
 import sys
 import threading
@@ -12,9 +15,9 @@ import time
 import atexit
 import os
 
-# Check Python version
-if sys.version_info < (3, 8):
-    print("Error: Python 3.8 or higher is required")
+# Check Python version - 3.8 only
+if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
+    print("Error: Python 3.8 only is required")
     print(f"Current version: {sys.version}")
     sys.exit(1)
 

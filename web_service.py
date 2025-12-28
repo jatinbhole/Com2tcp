@@ -2,14 +2,24 @@
 Flask Web Service for Serial to TCP Forwarder Configuration and Monitoring
 Supports multiple serial ports with independent configuration and control
 Includes authentication with login and password management
+
+Requirements:
+- Python 3.8 only
 """
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+import sys
 import threading
 import logging
 import json
 import os
+
+# Check Python version - 3.8 only
+if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
+    print("Error: Python 3.8 only is required")
+    print(f"Current version: {sys.version}")
+    sys.exit(1)
 from serial_forwarder import MultiPortForwarder
 
 app = Flask(__name__)
