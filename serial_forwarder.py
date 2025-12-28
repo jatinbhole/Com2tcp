@@ -89,6 +89,8 @@ class SinglePortForwarder:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         data BLOB NOT NULL,
                         timestamp TEXT NOT NULL,
+                        sent INTEGER DEFAULT 0,
+                        sent_timestamp TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
@@ -104,17 +106,30 @@ class SinglePortForwarder:
             with self.db_lock:
                 conn = sqlite3.connect(self.db_file)
                 cursor = conn.cursor()
-                cursor.execute('SELECT data, timestamp FROM buffer ORDER BY id ASC')
+                # Handle old schema without sent columns by using SELECT with defaults
+                try:
+                    cursor.execute('SELECT data, timestamp, sent, sent_timestamp FROM buffer ORDER BY id ASC')
+                except sqlite3.OperationalError:
+                    # Fallback for old schema
+                    cursor.execute('SELECT data, timestamp FROM buffer ORDER BY id ASC')
                 rows = cursor.fetchall()
                 conn.close()
             
             if rows:
                 with self.buffer_lock:
                     self.buffer.clear()
-                    for data, timestamp in rows:
+                    for row in rows:
+                        if len(row) == 4:
+                            data, timestamp, sent, sent_timestamp = row
+                        else:
+                            data, timestamp = row
+                            sent = 0
+                            sent_timestamp = None
                         self.buffer.append({
                             'data': data,
-                            'timestamp': timestamp
+                            'timestamp': timestamp,
+                            'sent': sent,
+                            'sent_timestamp': sent_timestamp
                         })
                 
                 logger.info(f"[{self.port_name}] Loaded {len(self.buffer)} buffered messages from database")
@@ -142,8 +157,8 @@ class SinglePortForwarder:
                 # Insert all buffer items
                 for item in buffer_list:
                     cursor.execute(
-                        'INSERT INTO buffer (data, timestamp) VALUES (?, ?)',
-                        (item['data'], item['timestamp'])
+                        'INSERT INTO buffer (data, timestamp, sent, sent_timestamp) VALUES (?, ?, ?, ?)',
+                        (item['data'], item['timestamp'], item.get('sent', 0), item.get('sent_timestamp', None))
                     )
                 
                 conn.commit()
@@ -226,13 +241,47 @@ class SinglePortForwarder:
         with self.buffer_lock:
             self.buffer.append({
                 'data': data,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'sent': 0,
+                'sent_timestamp': None
             })
             self.update_status('messages_buffered', self.status['messages_buffered'] + 1)
             logger.debug(f"[{self.port_name}] Buffered data: {len(data)} bytes. Buffer size: {len(self.buffer)}")
         
         # Save buffer to disk for persistence
         self.save_buffer()
+    
+    def cleanup_old_buffer(self):
+        """Remove sent messages older than 1 month from buffer"""
+        cutoff_time = datetime.now()
+        try:
+            with self.buffer_lock:
+                # Filter out old sent messages (older than 1 month)
+                items_to_keep = []
+                items_removed = 0
+                
+                for item in self.buffer:
+                    if item.get('sent') == 1 and item.get('sent_timestamp'):
+                        try:
+                            sent_time = datetime.fromisoformat(item['sent_timestamp'])
+                            age_seconds = (cutoff_time - sent_time).total_seconds()
+                            if age_seconds > 2592000:  # 1 month = 30 days = 2,592,000 seconds
+                                items_removed += 1
+                                age_days = age_seconds / (24 * 60 * 60)
+                                logger.debug(f"[{self.port_name}] Removing sent message older than 1 month (age: {age_days:.1f} days)")
+                                continue
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"[{self.port_name}] Error parsing sent_timestamp: {e}")
+                    
+                    items_to_keep.append(item)
+                
+                if items_removed > 0:
+                    self.buffer.clear()
+                    for item in items_to_keep:
+                        self.buffer.append(item)
+                    logger.info(f"[{self.port_name}] Cleaned up {items_removed} old sent messages from buffer")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error cleaning up old buffer: {e}")
     
     def flush_buffer(self):
         """Send all buffered data when connection is restored"""
@@ -244,37 +293,33 @@ class SinglePortForwarder:
             if buffer_size == 0:
                 return
             
-            logger.info(f"[{self.port_name}] Flushing {buffer_size} buffered messages")
+            # Filter to get only unsent messages
+            unsent_items = [item for item in self.buffer if item.get('sent') == 0]
             
-            while self.buffer:
-                item = self.buffer.popleft()
+            if len(unsent_items) == 0:
+                # Clean up old sent data
+                self.cleanup_old_buffer()
+                return
+            
+            logger.info(f"[{self.port_name}] Flushing {len(unsent_items)} buffered messages")
+            
+            for item in unsent_items:
                 try:
                     self.tcp_socket.sendall(item['data'])
+                    # Mark as sent and record sent timestamp
+                    item['sent'] = 1
+                    item['sent_timestamp'] = datetime.now().isoformat()
                     self.update_status('messages_sent', self.status['messages_sent'] + 1)
                 except Exception as e:
                     logger.error(f"[{self.port_name}] Error flushing buffer: {e}")
-                    # Put it back in buffer
-                    self.buffer.appendleft(item)
                     break
             
-            logger.info(f"[{self.port_name}] Buffer flush complete. Remaining: {len(self.buffer)}")
+            unsent_count = len([i for i in self.buffer if i.get('sent') == 0])
+            logger.info(f"[{self.port_name}] Buffer flush complete. Remaining unsent: {unsent_count}")
             
-            # Update persistent storage after flushing
-            if len(self.buffer) == 0:
-                # Clear database if empty
-                try:
-                    with self.db_lock:
-                        conn = sqlite3.connect(self.db_file)
-                        cursor = conn.cursor()
-                        cursor.execute('DELETE FROM buffer')
-                        conn.commit()
-                        conn.close()
-                    logger.debug(f"[{self.port_name}] Cleared empty buffer from database")
-                except Exception as e:
-                    logger.error(f"[{self.port_name}] Error clearing database: {e}")
-            else:
-                # Save remaining buffer
-                self.save_buffer()
+            # Clean up old sent data and save remaining buffer
+            self.cleanup_old_buffer()
+            self.save_buffer()
     
     def send_data(self, data):
         """Send data via TCP or buffer it if connection is lost"""
@@ -345,6 +390,26 @@ class SinglePortForwarder:
         
         logger.info(f"[{self.port_name}] TCP reconnect thread stopped")
     
+    def cleanup_thread(self):
+        """Thread to periodically clean up old sent messages from buffer"""
+        logger.info(f"[{self.port_name}] Buffer cleanup thread started")
+        cleanup_interval = 30  # Check every 30 seconds
+        
+        while self.running:
+            try:
+                # Clean up old sent data
+                self.cleanup_old_buffer()
+                # Save buffer after cleanup
+                self.save_buffer()
+                
+                time.sleep(cleanup_interval)
+            except Exception as e:
+                logger.error(f"[{self.port_name}] Error in cleanup thread: {e}")
+                if self.running:
+                    time.sleep(cleanup_interval)
+        
+        logger.info(f"[{self.port_name}] Buffer cleanup thread stopped")
+    
     def start(self):
         """Start the forwarder for this port"""
         if self.running:
@@ -357,8 +422,9 @@ class SinglePortForwarder:
         # Start threads
         serial_thread = threading.Thread(target=self.serial_reader_thread, daemon=True)
         tcp_thread = threading.Thread(target=self.tcp_reconnect_thread, daemon=True)
+        cleanup_thread = threading.Thread(target=self.cleanup_thread, daemon=True)
         
-        self.threads = [serial_thread, tcp_thread]
+        self.threads = [serial_thread, tcp_thread, cleanup_thread]
         
         for thread in self.threads:
             thread.start()
