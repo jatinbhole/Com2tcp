@@ -1,27 +1,113 @@
 """
 Flask Web Service for Serial to TCP Forwarder Configuration and Monitoring
 Supports multiple serial ports with independent configuration and control
+Includes authentication with login and password management
 """
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
 import threading
 import logging
+import json
+import os
 from serial_forwarder import MultiPortForwarder
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-change-this'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-this-secret-key-in-production')
+
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
 
 # Initialize forwarder
 multi_forwarder = None
 forwarder_lock = threading.Lock()
 
+# Credentials file path
+CREDENTIALS_FILE = 'credentials.json'
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class User(UserMixin):
+    """User model for authentication"""
+    def __init__(self, username):
+        self.id = username
+        self.username = username
+
+
+@login_manager.user_loader
+def load_user(username):
+    """Load user from username"""
+    return User(username)
+
+
+def load_credentials():
+    """Load credentials from file"""
+    if os.path.exists(CREDENTIALS_FILE):
+        try:
+            with open(CREDENTIALS_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading credentials: {e}")
+    
+    # Return default credentials if file doesn't exist
+    return {
+        'admin': generate_password_hash('admin123')
+    }
+
+
+def save_credentials(credentials):
+    """Save credentials to file"""
+    try:
+        with open(CREDENTIALS_FILE, 'w') as f:
+            json.dump(credentials, f, indent=4)
+        logger.info("Credentials saved successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving credentials: {e}")
+        return False
+
+
+# Load credentials on startup
+credentials = load_credentials()
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Login page"""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        if username in credentials and check_password_hash(credentials[username], password):
+            user = User(username)
+            login_user(user, remember=True)
+            logger.info(f"User {username} logged in successfully")
+            return redirect(url_for('index'))
+        else:
+            logger.warning(f"Failed login attempt for user: {username}")
+            return render_template('login.html', error='Invalid username or password')
+    
+    return render_template('login.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    """Logout"""
+    logger.info(f"User {current_user.username} logged out")
+    logout_user()
+    return redirect(url_for('login'))
+
+
 @app.route('/')
+@login_required
 def index():
     """Main dashboard page"""
-    return render_template('index_multi.html')
+    return render_template('index_multi.html', username=current_user.username)
 
 
 @app.route('/api/status')
@@ -109,6 +195,46 @@ def update_config():
     
     except Exception as e:
         logger.error(f"Error updating config: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/change_password', methods=['POST'])
+@login_required
+def change_password():
+    """Change password for current user"""
+    try:
+        data = request.get_json()
+        old_password = data.get('old_password')
+        new_password = data.get('new_password')
+        confirm_password = data.get('confirm_password')
+        
+        # Validate inputs
+        if not all([old_password, new_password, confirm_password]):
+            return jsonify({'success': False, 'error': 'All fields are required'}), 400
+        
+        # Verify old password
+        if not check_password_hash(credentials[current_user.username], old_password):
+            logger.warning(f"Password change failed for {current_user.username}: incorrect old password")
+            return jsonify({'success': False, 'error': 'Old password is incorrect'}), 400
+        
+        # Validate new password
+        if len(new_password) < 6:
+            return jsonify({'success': False, 'error': 'New password must be at least 6 characters'}), 400
+        
+        if new_password != confirm_password:
+            return jsonify({'success': False, 'error': 'Passwords do not match'}), 400
+        
+        # Update password
+        credentials[current_user.username] = generate_password_hash(new_password)
+        
+        if save_credentials(credentials):
+            logger.info(f"Password changed for user: {current_user.username}")
+            return jsonify({'success': True, 'message': 'Password changed successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to save new password'}), 500
+    
+    except Exception as e:
+        logger.error(f"Error changing password: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

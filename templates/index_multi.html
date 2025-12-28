@@ -29,17 +29,204 @@
             border-radius: 10px;
             margin-bottom: 30px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
-        .header h1 {
+        .header-content h1 {
             color: #333;
             margin-bottom: 10px;
             font-size: 2em;
         }
         
-        .header p {
+        .header-content p {
             color: #666;
             font-size: 1.1em;
+        }
+        
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .user-info {
+            text-align: right;
+        }
+        
+        .user-info .username {
+            font-weight: 600;
+            color: #333;
+            font-size: 1em;
+        }
+        
+        .user-info .email {
+            color: #999;
+            font-size: 0.85em;
+        }
+        
+        .header-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        
+        .header-btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .header-btn-primary:hover {
+            background: #5568d3;
+        }
+        
+        .header-btn-danger {
+            background: #f44336;
+            color: white;
+        }
+        
+        .header-btn-danger:hover {
+            background: #d32f2f;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal.show {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            background-color: white;
+            padding: 35px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 420px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        
+        .modal-header {
+            margin-bottom: 25px;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        
+        .modal-header h2 {
+            color: #667eea;
+            font-size: 1.6em;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .modal-body {
+            margin-bottom: 20px;
+        }
+        
+        .modal-input {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 15px;
+        }
+        
+        .modal-input span {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 0.95em;
+        }
+        
+        .modal-input input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .modal-input input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .modal-footer {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        .modal-footer button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.95em;
+            transition: all 0.3s ease;
+        }
+        
+        .modal-footer .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        
+        .modal-footer .btn-secondary:hover {
+            background: #e8e8e8;
+            border-color: #999;
+        }
+        
+        .modal-footer .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .modal-footer .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .modal-footer .btn-secondary {
+            background: #ddd;
+            color: #333;
+        }
+        
+        .modal-footer .btn-secondary:hover {
+            background: #ccc;
         }
         
         .tabs {
@@ -304,8 +491,18 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔌 Serial to TCP Forwarder</h1>
-            <p>Multi-Port Control Panel - Monitor and configure multiple serial connections</p>
+            <div class="header-content">
+                <h1>🔌 Serial to TCP Forwarder</h1>
+                <p>Multi-Port Control Panel - Monitor and configure multiple serial connections</p>
+            </div>
+            <div class="header-actions">
+                <div class="user-info">
+                    <div class="username">👤 {{ username }}</div>
+                    <div class="email">Logged in user</div>
+                </div>
+                <button class="header-btn header-btn-primary" onclick="openPasswordModal()">🔐 Change Password</button>
+                <a href="/logout" class="header-btn header-btn-danger" style="text-decoration: none;">🚪 Logout</a>
+            </div>
         </div>
         
         <!-- Tabs -->
@@ -731,6 +928,91 @@
                 alert.style.display = 'none';
             }, 5000);
         }
+        
+        function openPasswordModal() {
+            document.getElementById('passwordModal').classList.add('show');
+        }
+        
+        function closePasswordModal() {
+            document.getElementById('passwordModal').classList.remove('show');
+            document.getElementById('passwordForm').reset();
+        }
+        
+        function changePassword() {
+            const oldPassword = document.getElementById('oldPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            if (!oldPassword || !newPassword || !confirmPassword) {
+                alert('All fields are required');
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                alert('New passwords do not match');
+                return;
+            }
+            
+            if (newPassword.length < 6) {
+                alert('New password must be at least 6 characters');
+                return;
+            }
+            
+            fetch('/api/change_password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    old_password: oldPassword,
+                    new_password: newPassword,
+                    confirm_password: confirmPassword
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Password changed successfully!');
+                    closePasswordModal();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => alert('Error: ' + error));
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('passwordModal');
+            if (event.target === modal) {
+                closePasswordModal();
+            }
+        }
     </script>
-</body>
-</html>
+    
+    <!-- Password Change Modal -->
+    <div id="passwordModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔐 Change Password</h2>
+            </div>
+            <div class="modal-body">
+                <form id="passwordForm">
+                    <label class="modal-input">
+                        <span>Current Password:</span>
+                        <input type="password" id="oldPassword" placeholder="Enter current password" required>
+                    </label>
+                    <label class="modal-input">
+                        <span>New Password:</span>
+                        <input type="password" id="newPassword" placeholder="Enter new password (min 6 characters)" required>
+                    </label>
+                    <label class="modal-input">
+                        <span>Confirm Password:</span>
+                        <input type="password" id="confirmPassword" placeholder="Confirm new password" required>
+                    </label>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closePasswordModal()">Cancel</button>
+                <button class="btn-primary" onclick="changePassword()">Change Password</button>
+            </div>
+        </div>
+    </div>
