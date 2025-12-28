@@ -1,12 +1,12 @@
 [Unit]
-Description=Serial to TCP Forwarder Web Service
+Description=Serial to TCP Forwarder - Web Service & Background Forwarder
 After=network.target
 
 [Service]
 Type=simple
 User=your-username
 WorkingDirectory=/path/to/Com2tcp
-ExecStart=/usr/bin/python3 /path/to/Com2tcp/web_service.py
+ExecStart=/path/to/venv/bin/python /path/to/Com2tcp/service_runner.py
 Restart=always
 RestartSec=10
 
