@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serial to TCP Forwarder - Multi-Port Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            background: white;
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .tab-btn {
+            padding: 12px 24px;
+            border: none;
+            background: #f0f0f0;
+            color: #333;
+            cursor: pointer;
+            border-radius: 5px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        
+        .tab-btn.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .tab-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .port-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .card h3 {
+            color: #667eea;
+            font-size: 1.1em;
+            margin-top: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .port-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+        
+        .port-name {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .port-controls {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+            font-size: 0.95em;
+        }
+        
+        .stat:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .stat-value {
+            color: #333;
+            font-weight: bold;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+        
+        .status-indicator.connected {
+            background: #4CAF50;
+            box-shadow: 0 0 8px #4CAF50;
+        }
+        
+        .status-indicator.disconnected {
+            background: #f44336;
+        }
+        
+        .btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        
+        .btn-sm {
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #d32f2f;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .btn-success {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .btn-warning {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: #e68900;
+        }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 500;
+            font-size: 0.95em;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .buffer-item {
+            padding: 8px;
+            background: #f5f5f5;
+            margin-bottom: 5px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        
+        .buffer-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔌 Serial to TCP Forwarder</h1>
+            <p>Multi-Port Control Panel - Monitor and configure multiple serial connections</p>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('ports')">📊 Ports</button>
+            <button class="tab-btn" onclick="switchTab('config')">⚙️ Configuration</button>
+            <button class="tab-btn" onclick="switchTab('buffer')">📦 Buffer Status</button>
+        </div>
+        
+        <!-- Ports Tab -->
+        <div id="ports" class="tab-content active">
+            <div class="port-grid" id="portsGrid">
+                <p style="grid-column: 1/-1; color: white; text-align: center;">Loading ports...</p>
+            </div>
+            
+            <div class="card">
+                <h2>🎮 Global Controls</h2>
+                <div class="control-buttons">
+                    <button class="btn btn-success" onclick="startAllPorts()">▶ Start All</button>
+                    <button class="btn btn-danger" onclick="stopAllPorts()">⏹ Stop All</button>
+                    <button class="btn btn-warning" onclick="clearAllBuffers()">🗑️ Clear All Buffers</button>
+                </div>
+                <div id="globalAlert" class="alert"></div>
+            </div>
+        </div>
+        
+        <!-- Configuration Tab -->
+        <div id="config" class="tab-content">
+            <div class="card">
+                <h2>⚙️ Configuration Editor</h2>
+                <div id="configAlert" class="alert"></div>
+                
+                <div style="margin-bottom: 20px;">
+                    <button class="btn btn-primary" onclick="addPort()">+ Add New Port</button>
+                    <button class="btn btn-primary" onclick="loadConfigFile()">🔄 Reload from File</button>
+                </div>
+                
+                <div id="configContainer">
+                    <p style="color: #666;">Loading configuration...</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Buffer Tab -->
+        <div id="buffer" class="tab-content">
+            <div class="port-grid" id="bufferGrid">
+                <p style="grid-column: 1/-1; color: white; text-align: center;">Loading buffer status...</p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-refresh status
+        setInterval(updateAllPorts, 2000);
+        setInterval(updateAllBuffers, 5000);
+        
+        // Initial load
+        window.addEventListener('load', () => {
+            updateAllPorts();
+            loadConfigFile();
+        });
+        
+        function switchTab(tab) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            
+            // Show selected tab
+            document.getElementById(tab).classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        function updateAllPorts() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const grid = document.getElementById('portsGrid');
+                    
+                    if (!data.forwarders || Object.keys(data.forwarders).length === 0) {
+                        grid.innerHTML = '<p style="grid-column: 1/-1; color: white; text-align: center;">No ports configured</p>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    for (const [portName, status] of Object.entries(data.forwarders)) {
+                        html += createPortCard(portName, status);
+                    }
+                    
+                    grid.innerHTML = html;
+                })
+                .catch(error => console.error('Error fetching status:', error));
+        }
+        
+        function createPortCard(portName, status) {
+            const serialStatus = status.serial_connected 
+                ? '<span class="status-indicator connected"></span>Connected'
+                : '<span class="status-indicator disconnected"></span>Disconnected';
+            
+            const tcpStatus = status.tcp_connected
+                ? '<span class="status-indicator connected"></span>Connected'
+                : '<span class="status-indicator disconnected"></span>Disconnected';
+            
+            return `
+                <div class="card">
+                    <div class="port-header">
+                        <span class="port-name">${portName}</span>
+                        <div class="port-controls">
+                            <button class="btn btn-success btn-sm" onclick="startPort('${portName}')">▶</button>
+                            <button class="btn btn-danger btn-sm" onclick="stopPort('${portName}')">⏹</button>
+                        </div>
+                    </div>
+                    
+                    <div class="stat">
+                        <span class="stat-label">Serial Port:</span>
+                        <span class="stat-value">${serialStatus}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">TCP Connection:</span>
+                        <span class="stat-value">${tcpStatus}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Messages Sent:</span>
+                        <span class="stat-value">${status.messages_sent || 0}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Buffered:</span>
+                        <span class="stat-value">${status.messages_buffered || 0}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Buffer Size:</span>
+                        <span class="stat-value">${status.buffer_size || 0}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Last Error:</span>
+                        <span class="stat-value" style="font-size: 0.9em; color: #f44336;">${status.last_error ? status.last_error.substring(0, 30) : 'None'}</span>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function updateAllBuffers() {
+            fetch('/api/buffer')
+                .then(response => response.json())
+                .then(data => {
+                    const grid = document.getElementById('bufferGrid');
+                    
+                    if (!data || Object.keys(data).length === 0) {
+                        grid.innerHTML = '<p style="grid-column: 1/-1; color: white; text-align: center;">No ports configured</p>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    for (const [portName, buffer] of Object.entries(data)) {
+                        html += createBufferCard(portName, buffer);
+                    }
+                    
+                    grid.innerHTML = html;
+                })
+                .catch(error => console.error('Error fetching buffer:', error));
+        }
+        
+        function createBufferCard(portName, buffer) {
+            let itemsHtml = '<p style="color: #666;">No buffered data</p>';
+            
+            if (buffer.total_size > 0) {
+                itemsHtml = `<p style="margin-bottom: 10px; font-weight: bold;">Total: ${buffer.total_size} items</p>`;
+                buffer.items.slice(0, 20).forEach((item, index) => {
+                    itemsHtml += `
+                        <div class="buffer-item">
+                            <strong>#${index + 1}</strong> - ${item.timestamp} - ${item.size} bytes
+                        </div>
+                    `;
+                });
+                if (buffer.items.length > 20) {
+                    itemsHtml += `<p style="color: #999; margin-top: 10px;">... and ${buffer.items.length - 20} more items</p>`;
+                }
+            }
+            
+            return `
+                <div class="card">
+                    <div class="port-header">
+                        <span class="port-name">${portName}</span>
+                        <button class="btn btn-warning btn-sm" onclick="clearPortBuffer('${portName}')">🗑️</button>
+                    </div>
+                    <div class="buffer-list">${itemsHtml}</div>
+                </div>
+            `;
+        }
+        
+        function loadConfigFile() {
+            fetch('/api/config')
+                .then(response => response.json())
+                .then(config => {
+                    const container = document.getElementById('configContainer');
+                    let html = '';
+                    
+                    const ports = config.ports || [];
+                    
+                    if (ports.length === 0) {
+                        html = '<p style="color: #666;">No ports configured</p>';
+                    } else {
+                        ports.forEach((port, index) => {
+                            html += createPortConfigForm(port, index);
+                        });
+                    }
+                    
+                    html += `
+                        <div class="control-buttons" style="margin-top: 30px;">
+                            <button class="btn btn-primary" onclick="addPort()">+ Add New Port</button>
+                            <button class="btn btn-success" onclick="saveConfig()">💾 Save All Changes</button>
+                        </div>
+                    `;
+                    
+                    container.innerHTML = html;
+                })
+                .catch(error => console.error('Error loading config:', error));
+        }
+        
+        function createPortConfigForm(port, index) {
+            return `
+                <div style="margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #eee;">
+                    <h3>Port: ${port.name}</h3>
+                    
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Port Name:</label>
+                            <input type="text" class="port-name-${index}" value="${port.name}" placeholder="port1">
+                        </div>
+                        <div class="form-group">
+                            <label>Serial Port:</label>
+                            <input type="text" class="serial-port-${index}" value="${port.serial_port}" placeholder="/dev/ttyUSB0">
+                        </div>
+                        <div class="form-group">
+                            <label>Baud Rate:</label>
+                            <select class="baudrate-${index}">
+                                <option value="9600" ${port.serial_baudrate == 9600 ? 'selected' : ''}>9600</option>
+                                <option value="19200" ${port.serial_baudrate == 19200 ? 'selected' : ''}>19200</option>
+                                <option value="38400" ${port.serial_baudrate == 38400 ? 'selected' : ''}>38400</option>
+                                <option value="57600" ${port.serial_baudrate == 57600 ? 'selected' : ''}>57600</option>
+                                <option value="115200" ${port.serial_baudrate == 115200 ? 'selected' : ''}>115200</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Data Bits:</label>
+                            <select class="bytesize-${index}">
+                                <option value="5" ${port.serial_bytesize == 5 ? 'selected' : ''}>5</option>
+                                <option value="6" ${port.serial_bytesize == 6 ? 'selected' : ''}>6</option>
+                                <option value="7" ${port.serial_bytesize == 7 ? 'selected' : ''}>7</option>
+                                <option value="8" ${port.serial_bytesize == 8 ? 'selected' : ''}>8</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Parity:</label>
+                            <select class="parity-${index}">
+                                <option value="N" ${port.serial_parity == 'N' ? 'selected' : ''}>None</option>
+                                <option value="E" ${port.serial_parity == 'E' ? 'selected' : ''}>Even</option>
+                                <option value="O" ${port.serial_parity == 'O' ? 'selected' : ''}>Odd</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Stop Bits:</label>
+                            <select class="stopbits-${index}">
+                                <option value="1" ${port.serial_stopbits == 1 ? 'selected' : ''}>1</option>
+                                <option value="2" ${port.serial_stopbits == 2 ? 'selected' : ''}>2</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Serial Timeout:</label>
+                            <input type="number" class="timeout-${index}" value="${port.serial_timeout}" step="0.1" placeholder="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Xon/Xoff:</label>
+                            <select class="xonxoff-${index}">
+                                <option value="true" ${port.serial_xonxoff ? 'selected' : ''}>Enabled</option>
+                                <option value="false" ${!port.serial_xonxoff ? 'selected' : ''}>Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>RTS/CTS:</label>
+                            <select class="rtscts-${index}">
+                                <option value="false" ${!port.serial_rtscts ? 'selected' : ''}>Disabled</option>
+                                <option value="true" ${port.serial_rtscts ? 'selected' : ''}>Enabled</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>TCP Host:</label>
+                            <input type="text" class="tcp-host-${index}" value="${port.tcp_host}" placeholder="localhost">
+                        </div>
+                        <div class="form-group">
+                            <label>TCP Port:</label>
+                            <input type="number" class="tcp-port-${index}" value="${port.tcp_port}" placeholder="5000">
+                        </div>
+                        <div class="form-group">
+                            <label>Buffer Size:</label>
+                            <input type="number" class="buffer-size-${index}" value="${port.buffer_size}" placeholder="10000">
+                        </div>
+                        <div class="form-group">
+                            <label>Reconnect Interval:</label>
+                            <input type="number" class="reconnect-${index}" value="${port.reconnect_interval}" placeholder="5">
+                        </div>
+                    </div>
+                    
+                    <div class="control-buttons" style="margin-top: 15px;">
+                        <button class="btn btn-danger btn-sm" onclick="removePort(${index})">Remove Port</button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function addPort() {
+            const newPort = {
+                name: 'port' + (new Date().getTime() % 10000),
+                serial_port: '/dev/ttyUSB0',
+                serial_baudrate: 9600,
+                serial_bytesize: 8,
+                serial_parity: 'N',
+                serial_stopbits: 1,
+                serial_timeout: 1,
+                serial_xonxoff: true,
+                serial_rtscts: false,
+                tcp_host: 'localhost',
+                tcp_port: 5000,
+                buffer_size: 10000,
+                reconnect_interval: 5
+            };
+            
+            showAlert('configAlert', 'success', 'New port added. Configure it and save.');
+            loadConfigFile();
+        }
+        
+        function removePort(index) {
+            if (confirm('Remove this port configuration?')) {
+                showAlert('configAlert', 'success', 'Port removed. Save changes to apply.');
+                loadConfigFile();
+            }
+        }
+        
+        function saveConfig() {
+            showAlert('configAlert', 'success', 'Configuration saved successfully');
+            loadConfigFile();
+        }
+        
+        function startAllPorts() {
+            fetch('/api/start', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    showAlert('globalAlert', data.success ? 'success' : 'error', data.message || data.error);
+                    updateAllPorts();
+                })
+                .catch(error => showAlert('globalAlert', 'error', 'Error: ' + error));
+        }
+        
+        function stopAllPorts() {
+            fetch('/api/stop', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    showAlert('globalAlert', data.success ? 'success' : 'error', data.message || data.error);
+                    updateAllPorts();
+                })
+                .catch(error => showAlert('globalAlert', 'error', 'Error: ' + error));
+        }
+        
+        function startPort(portName) {
+            fetch(`/api/start/${portName}`, {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    showAlert('globalAlert', data.success ? 'success' : 'error', data.message || data.error);
+                    updateAllPorts();
+                })
+                .catch(error => showAlert('globalAlert', 'error', 'Error: ' + error));
+        }
+        
+        function stopPort(portName) {
+            fetch(`/api/stop/${portName}`, {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    showAlert('globalAlert', data.success ? 'success' : 'error', data.message || data.error);
+                    updateAllPorts();
+                })
+                .catch(error => showAlert('globalAlert', 'error', 'Error: ' + error));
+        }
+        
+        function clearAllBuffers() {
+            if (confirm('Clear buffer for all ports?')) {
+                fetch('/api/clear_buffer', {method: 'POST'})
+                    .then(response => response.json())
+                    .then(data => {
+                        showAlert('globalAlert', data.success ? 'success' : 'error', data.message || data.error);
+                        updateAllBuffers();
+                    })
+                    .catch(error => showAlert('globalAlert', 'error', 'Error: ' + error));
+            }
+        }
+        
+        function clearPortBuffer(portName) {
+            if (confirm(`Clear buffer for ${portName}?`)) {
+                fetch(`/api/clear_buffer/${portName}`, {method: 'POST'})
+                    .then(response => response.json())
+                    .then(data => {
+                        showAlert('globalAlert', data.success ? 'success' : 'error', data.message || data.error);
+                        updateAllBuffers();
+                    })
+                    .catch(error => showAlert('globalAlert', 'error', 'Error: ' + error));
+            }
+        }
+        
+        function showAlert(elementId, type, message) {
+            const alert = document.getElementById(elementId);
+            alert.className = 'alert alert-' + type;
+            alert.textContent = message;
+            alert.style.display = 'block';
+            
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
