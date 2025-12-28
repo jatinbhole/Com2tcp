@@ -1,6 +1,7 @@
 """
 Serial Port to TCP Forwarder with Buffering
-Forwards data from serial port to TCP connection with automatic buffering on disconnect
+Forwards data from serial ports to TCP connections with automatic buffering on disconnect
+Supports multiple serial ports with independent TCP forwarding
 """
 import serial
 import socket
@@ -17,11 +18,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-class SerialToTCPForwarder:
-    def __init__(self, config_file='config.json', buffer_file='buffer.pkl'):
-        self.config_file = config_file
-        self.buffer_file = buffer_file
-        self.config = self.load_config()
+class SinglePortForwarder:
+    """Handles forwarding for a single serial port to TCP connection"""
+    
+    def __init__(self, port_name, port_config, buffer_dir='buffers'):
+        self.port_name = port_name
+        self.port_config = port_config
+        self.buffer_dir = buffer_dir
+        self.buffer_file = os.path.join(buffer_dir, f'buffer_{port_name}.pkl')
         
         # Serial port settings
         self.serial_port = None
@@ -32,14 +36,19 @@ class SerialToTCPForwarder:
         self.tcp_connected = False
         
         # Buffer for storing data when TCP connection is lost
-        self.buffer = deque(maxlen=self.config.get('buffer_size', 10000))
+        buffer_size = port_config.get('buffer_size', 10000)
+        self.buffer = deque(maxlen=buffer_size)
         self.buffer_lock = threading.Lock()
+        
+        # Create buffer directory if it doesn't exist
+        os.makedirs(buffer_dir, exist_ok=True)
         
         # Load any existing buffered data from disk
         self.load_buffer()
         
         # Status tracking
         self.status = {
+            'port_name': port_name,
             'serial_connected': False,
             'tcp_connected': False,
             'buffer_size': 0,
@@ -54,45 +63,6 @@ class SerialToTCPForwarder:
         self.running = False
         self.threads = []
         
-    def load_config(self):
-        """Load configuration from JSON file"""
-        try:
-            with open(self.config_file, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.warning(f"Config file {self.config_file} not found. Using defaults.")
-            return self.get_default_config()
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing config file: {e}")
-            return self.get_default_config()
-    
-    def get_default_config(self):
-        """Return default configuration"""
-        return {
-            'serial_port': '/dev/ttyUSB0',
-            'serial_baudrate': 9600,
-            'serial_bytesize': 8,
-            'serial_parity': 'N',
-            'serial_stopbits': 1,
-            'serial_timeout': 1,
-            'tcp_host': 'localhost',
-            'tcp_port': 5000,
-            'buffer_size': 10000,
-            'reconnect_interval': 5
-        }
-    
-    def save_config(self, new_config):
-        """Save configuration to JSON file"""
-        try:
-            with open(self.config_file, 'w') as f:
-                json.dump(new_config, f, indent=4)
-            self.config = new_config
-            logger.info("Configuration saved successfully")
-            return True
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
-            return False
-    
     def load_buffer(self):
         """Load buffer from disk if it exists"""
         try:
@@ -100,15 +70,15 @@ class SerialToTCPForwarder:
                 with open(self.buffer_file, 'rb') as f:
                     saved_buffer = pickle.load(f)
                     with self.buffer_lock:
-                        self.buffer = deque(saved_buffer, maxlen=self.config.get('buffer_size', 10000))
-                    logger.info(f"Loaded {len(self.buffer)} buffered messages from disk")
+                        self.buffer = deque(saved_buffer, maxlen=self.port_config.get('buffer_size', 10000))
+                    logger.info(f"[{self.port_name}] Loaded {len(self.buffer)} buffered messages from disk")
                     if len(self.buffer) > 0:
-                        logger.info("Buffer will be sent when TCP connection is established")
+                        logger.info(f"[{self.port_name}] Buffer will be sent when TCP connection is established")
         except Exception as e:
-            logger.error(f"Error loading buffer from disk: {e}")
+            logger.error(f"[{self.port_name}] Error loading buffer from disk: {e}")
             # If there's an error, start with empty buffer
             with self.buffer_lock:
-                self.buffer = deque(maxlen=self.config.get('buffer_size', 10000))
+                self.buffer = deque(maxlen=self.port_config.get('buffer_size', 10000))
     
     def save_buffer(self):
         """Save buffer to disk for persistence across restarts"""
@@ -120,9 +90,9 @@ class SerialToTCPForwarder:
             if buffer_list:
                 with open(self.buffer_file, 'wb') as f:
                     pickle.dump(buffer_list, f)
-                logger.debug(f"Saved {len(buffer_list)} buffered messages to disk")
+                logger.debug(f"[{self.port_name}] Saved {len(buffer_list)} buffered messages to disk")
         except Exception as e:
-            logger.error(f"Error saving buffer to disk: {e}")
+            logger.error(f"[{self.port_name}] Error saving buffer to disk: {e}")
     
     def connect_serial(self):
         """Connect to serial port"""
@@ -133,23 +103,25 @@ class SerialToTCPForwarder:
             parity_map = {'N': serial.PARITY_NONE, 'E': serial.PARITY_EVEN, 'O': serial.PARITY_ODD}
             
             self.serial_port = serial.Serial(
-                port=self.config['serial_port'],
-                baudrate=self.config['serial_baudrate'],
-                bytesize=self.config['serial_bytesize'],
-                parity=parity_map.get(self.config['serial_parity'], serial.PARITY_NONE),
-                stopbits=self.config['serial_stopbits'],
-                timeout=self.config['serial_timeout']
+                port=self.port_config['serial_port'],
+                baudrate=self.port_config['serial_baudrate'],
+                bytesize=self.port_config['serial_bytesize'],
+                parity=parity_map.get(self.port_config['serial_parity'], serial.PARITY_NONE),
+                stopbits=self.port_config['serial_stopbits'],
+                timeout=self.port_config['serial_timeout'],
+                xonxoff=self.port_config.get('serial_xonxoff', True),
+                rtscts=self.port_config.get('serial_rtscts', False)
             )
             
             self.serial_connected = True
             self.update_status('serial_connected', True)
-            logger.info(f"Connected to serial port {self.config['serial_port']}")
+            logger.info(f"[{self.port_name}] Connected to serial port {self.port_config['serial_port']}")
             return True
         except Exception as e:
             self.serial_connected = False
             self.update_status('serial_connected', False)
             self.update_status('last_error', f"Serial connection error: {str(e)}")
-            logger.error(f"Failed to connect to serial port: {e}")
+            logger.error(f"[{self.port_name}] Failed to connect to serial port: {e}")
             return False
     
     def connect_tcp(self):
@@ -163,10 +135,10 @@ class SerialToTCPForwarder:
             
             self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_socket.settimeout(5)
-            self.tcp_socket.connect((self.config['tcp_host'], self.config['tcp_port']))
+            self.tcp_socket.connect((self.port_config['tcp_host'], self.port_config['tcp_port']))
             self.tcp_connected = True
             self.update_status('tcp_connected', True)
-            logger.info(f"Connected to TCP server {self.config['tcp_host']}:{self.config['tcp_port']}")
+            logger.info(f"[{self.port_name}] Connected to TCP server {self.port_config['tcp_host']}:{self.port_config['tcp_port']}")
             
             # Send buffered data after reconnection
             self.flush_buffer()
@@ -175,7 +147,7 @@ class SerialToTCPForwarder:
             self.tcp_connected = False
             self.update_status('tcp_connected', False)
             self.update_status('last_error', f"TCP connection error: {str(e)}")
-            logger.error(f"Failed to connect to TCP server: {e}")
+            logger.error(f"[{self.port_name}] Failed to connect to TCP server: {e}")
             return False
     
     def update_status(self, key, value):
@@ -198,7 +170,7 @@ class SerialToTCPForwarder:
                 'timestamp': datetime.now().isoformat()
             })
             self.update_status('messages_buffered', self.status['messages_buffered'] + 1)
-            logger.debug(f"Buffered data: {len(data)} bytes. Buffer size: {len(self.buffer)}")
+            logger.debug(f"[{self.port_name}] Buffered data: {len(data)} bytes. Buffer size: {len(self.buffer)}")
         
         # Save buffer to disk for persistence
         self.save_buffer()
@@ -213,7 +185,7 @@ class SerialToTCPForwarder:
             if buffer_size == 0:
                 return
             
-            logger.info(f"Flushing {buffer_size} buffered messages")
+            logger.info(f"[{self.port_name}] Flushing {buffer_size} buffered messages")
             
             while self.buffer:
                 item = self.buffer.popleft()
@@ -221,12 +193,12 @@ class SerialToTCPForwarder:
                     self.tcp_socket.sendall(item['data'])
                     self.update_status('messages_sent', self.status['messages_sent'] + 1)
                 except Exception as e:
-                    logger.error(f"Error flushing buffer: {e}")
+                    logger.error(f"[{self.port_name}] Error flushing buffer: {e}")
                     # Put it back in buffer
                     self.buffer.appendleft(item)
                     break
             
-            logger.info(f"Buffer flush complete. Remaining: {len(self.buffer)}")
+            logger.info(f"[{self.port_name}] Buffer flush complete. Remaining: {len(self.buffer)}")
             
             # Update persistent storage after flushing
             if len(self.buffer) == 0:
@@ -234,9 +206,9 @@ class SerialToTCPForwarder:
                 try:
                     if os.path.exists(self.buffer_file):
                         os.remove(self.buffer_file)
-                        logger.debug("Removed empty buffer file")
+                        logger.debug(f"[{self.port_name}] Removed empty buffer file")
                 except Exception as e:
-                    logger.error(f"Error removing buffer file: {e}")
+                    logger.error(f"[{self.port_name}] Error removing buffer file: {e}")
             else:
                 # Save remaining buffer
                 self.save_buffer()
@@ -249,7 +221,7 @@ class SerialToTCPForwarder:
                 self.update_status('messages_sent', self.status['messages_sent'] + 1)
                 return True
             except Exception as e:
-                logger.error(f"Error sending data via TCP: {e}")
+                logger.error(f"[{self.port_name}] Error sending data via TCP: {e}")
                 self.tcp_connected = False
                 self.update_status('tcp_connected', False)
                 self.add_to_buffer(data)
@@ -260,54 +232,56 @@ class SerialToTCPForwarder:
     
     def serial_reader_thread(self):
         """Thread to read data from serial port and forward to TCP"""
-        logger.info("Serial reader thread started")
+        logger.info(f"[{self.port_name}] Serial reader thread started")
+        reconnect_interval = self.port_config.get('reconnect_interval', 5)
         
         while self.running:
             if not self.serial_connected:
                 if not self.connect_serial():
-                    time.sleep(self.config['reconnect_interval'])
+                    time.sleep(reconnect_interval)
                     continue
             
             try:
                 if self.serial_port and self.serial_port.in_waiting > 0:
                     data = self.serial_port.read(self.serial_port.in_waiting)
                     if data:
-                        logger.debug(f"Received {len(data)} bytes from serial port")
+                        logger.debug(f"[{self.port_name}] Received {len(data)} bytes from serial port")
                         self.send_data(data)
                 else:
                     time.sleep(0.01)  # Small delay to prevent busy waiting
             except serial.SerialException as e:
-                logger.error(f"Serial read error: {e}")
+                logger.error(f"[{self.port_name}] Serial read error: {e}")
                 self.serial_connected = False
                 self.update_status('serial_connected', False)
                 self.update_status('last_error', f"Serial read error: {str(e)}")
-                time.sleep(self.config['reconnect_interval'])
+                time.sleep(reconnect_interval)
             except Exception as e:
-                logger.error(f"Unexpected error in serial reader: {e}")
+                logger.error(f"[{self.port_name}] Unexpected error in serial reader: {e}")
                 time.sleep(1)
         
-        logger.info("Serial reader thread stopped")
+        logger.info(f"[{self.port_name}] Serial reader thread stopped")
     
     def tcp_reconnect_thread(self):
         """Thread to maintain TCP connection"""
-        logger.info("TCP reconnect thread started")
+        logger.info(f"[{self.port_name}] TCP reconnect thread started")
+        reconnect_interval = self.port_config.get('reconnect_interval', 5)
         
         while self.running:
             if not self.tcp_connected:
                 self.connect_tcp()
-                time.sleep(self.config['reconnect_interval'])
+                time.sleep(reconnect_interval)
             else:
                 time.sleep(1)  # Check connection status periodically
         
-        logger.info("TCP reconnect thread stopped")
+        logger.info(f"[{self.port_name}] TCP reconnect thread stopped")
     
     def start(self):
-        """Start the forwarder"""
+        """Start the forwarder for this port"""
         if self.running:
-            logger.warning("Forwarder is already running")
+            logger.warning(f"[{self.port_name}] Forwarder is already running")
             return False
         
-        logger.info("Starting Serial to TCP Forwarder")
+        logger.info(f"[{self.port_name}] Starting forwarder")
         self.running = True
         
         # Start threads
@@ -319,16 +293,16 @@ class SerialToTCPForwarder:
         for thread in self.threads:
             thread.start()
         
-        logger.info("Forwarder started successfully")
+        logger.info(f"[{self.port_name}] Forwarder started successfully")
         return True
     
     def stop(self):
-        """Stop the forwarder"""
+        """Stop the forwarder for this port"""
         if not self.running:
-            logger.warning("Forwarder is not running")
+            logger.warning(f"[{self.port_name}] Forwarder is not running")
             return False
         
-        logger.info("Stopping Serial to TCP Forwarder")
+        logger.info(f"[{self.port_name}] Stopping forwarder")
         self.running = False
         
         # Wait for threads to finish
@@ -350,12 +324,149 @@ class SerialToTCPForwarder:
         self.update_status('serial_connected', False)
         self.update_status('tcp_connected', False)
         
-        logger.info("Forwarder stopped")
+        logger.info(f"[{self.port_name}] Forwarder stopped")
         return True
 
 
+class MultiPortForwarder:
+class MultiPortForwarder:
+    """Manages multiple serial port to TCP forwarders"""
+    
+    def __init__(self, config_file='config.json'):
+        self.config_file = config_file
+        self.config = self.load_config()
+        self.forwarders = {}
+        self.status_lock = threading.Lock()
+        
+    def load_config(self):
+        """Load configuration from JSON file"""
+        try:
+            with open(self.config_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            logger.warning(f"Config file {self.config_file} not found. Using defaults.")
+            return self.get_default_config()
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing config file: {e}")
+            return self.get_default_config()
+    
+    def get_default_config(self):
+        """Return default configuration with a single port"""
+        return {
+            'ports': [
+                {
+                    'name': 'port1',
+                    'serial_port': '/dev/ttyUSB0',
+                    'serial_baudrate': 9600,
+                    'serial_bytesize': 8,
+                    'serial_parity': 'N',
+                    'serial_stopbits': 1,
+                    'serial_timeout': 1,
+                    'serial_xonxoff': True,
+                    'serial_rtscts': False,
+                    'tcp_host': 'localhost',
+                    'tcp_port': 5000,
+                    'buffer_size': 10000,
+                    'reconnect_interval': 5
+                }
+            ]
+        }
+    
+    def save_config(self, new_config):
+        """Save configuration to JSON file"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(new_config, f, indent=4)
+            self.config = new_config
+            logger.info("Configuration saved successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving config: {e}")
+            return False
+    
+    def start(self):
+        """Start all port forwarders"""
+        ports = self.config.get('ports', [])
+        
+        if not ports:
+            logger.error("No ports configured")
+            return False
+        
+        logger.info(f"Starting {len(ports)} port forwarders")
+        
+        for port_config in ports:
+            port_name = port_config.get('name', port_config.get('serial_port', 'unknown'))
+            
+            try:
+                forwarder = SinglePortForwarder(port_name, port_config)
+                if forwarder.start():
+                    self.forwarders[port_name] = forwarder
+                else:
+                    logger.error(f"Failed to start forwarder for {port_name}")
+            except Exception as e:
+                logger.error(f"Error creating forwarder for {port_name}: {e}")
+        
+        logger.info(f"Successfully started {len(self.forwarders)} forwarders")
+        return len(self.forwarders) > 0
+    
+    def stop(self):
+        """Stop all port forwarders"""
+        logger.info(f"Stopping {len(self.forwarders)} forwarders")
+        
+        for port_name, forwarder in self.forwarders.items():
+            try:
+                forwarder.stop()
+            except Exception as e:
+                logger.error(f"Error stopping forwarder for {port_name}: {e}")
+        
+        self.forwarders.clear()
+        logger.info("All forwarders stopped")
+        return True
+    
+    def get_status(self):
+        """Get status of all forwarders"""
+        status = {
+            'timestamp': datetime.now().isoformat(),
+            'forwarders': {}
+        }
+        
+        for port_name, forwarder in self.forwarders.items():
+            status['forwarders'][port_name] = forwarder.get_status()
+        
+        return status
+    
+    def get_forwarder(self, port_name):
+        """Get a specific forwarder by port name"""
+        return self.forwarders.get(port_name)
+
+
+# Backward compatibility: Alias for SinglePortForwarder
+class SerialToTCPForwarder(SinglePortForwarder):
+    """Backward compatible class - use SinglePortForwarder instead"""
+    def __init__(self, config_file='config.json', buffer_file='buffer.pkl'):
+        # Load config for backward compatibility
+        config = self.load_config_from_file(config_file)
+        super().__init__('default', config, 'buffers')
+        self.config_file_compat = config_file
+        self.buffer_file_compat = buffer_file
+    
+    @staticmethod
+    def load_config_from_file(config_file):
+        """Load configuration from JSON file"""
+        try:
+            with open(config_file, 'r') as f:
+                data = json.load(f)
+                # Handle both old single-port and new multi-port formats
+                if 'ports' in data:
+                    return data['ports'][0] if data['ports'] else {}
+                else:
+                    return data
+        except:
+            return {}
+
+
 if __name__ == '__main__':
-    forwarder = SerialToTCPForwarder()
+    forwarder = MultiPortForwarder()
     forwarder.start()
     
     try:
