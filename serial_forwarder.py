@@ -3,7 +3,11 @@ Serial Port to TCP Forwarder with Buffering
 Forwards data from serial ports to TCP connections with automatic buffering on disconnect
 Supports multiple serial ports with independent TCP forwarding
 Uses SQLite for persistent buffer storage
+
+Requirements:
+- Python 3.8 or higher
 """
+import sys
 import serial
 import socket
 import threading
@@ -14,6 +18,12 @@ import os
 import logging
 from collections import deque
 from datetime import datetime
+
+# Check Python version
+if sys.version_info < (3, 8):
+    print("Error: Python 3.8 or higher is required")
+    print(f"Current version: {sys.version}")
+    sys.exit(1)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
