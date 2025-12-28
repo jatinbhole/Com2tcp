@@ -2,13 +2,14 @@
 Serial Port to TCP Forwarder with Buffering
 Forwards data from serial ports to TCP connections with automatic buffering on disconnect
 Supports multiple serial ports with independent TCP forwarding
+Uses SQLite for persistent buffer storage
 """
 import serial
 import socket
 import threading
 import time
 import json
-import pickle
+import sqlite3
 import os
 import logging
 from collections import deque
@@ -25,7 +26,7 @@ class SinglePortForwarder:
         self.port_name = port_name
         self.port_config = port_config
         self.buffer_dir = buffer_dir
-        self.buffer_file = os.path.join(buffer_dir, f'buffer_{port_name}.pkl')
+        self.db_file = os.path.join(buffer_dir, f'buffer_{port_name}.db')
         
         # Serial port settings
         self.serial_port = None
@@ -39,9 +40,13 @@ class SinglePortForwarder:
         buffer_size = port_config.get('buffer_size', 10000)
         self.buffer = deque(maxlen=buffer_size)
         self.buffer_lock = threading.Lock()
+        self.db_lock = threading.Lock()
         
         # Create buffer directory if it doesn't exist
         os.makedirs(buffer_dir, exist_ok=True)
+        
+        # Initialize database
+        self.init_db()
         
         # Load any existing buffered data from disk
         self.load_buffer()
@@ -62,37 +67,81 @@ class SinglePortForwarder:
         # Control flags
         self.running = False
         self.threads = []
-        
-    def load_buffer(self):
-        """Load buffer from disk if it exists"""
+    
+    def init_db(self):
+        """Initialize SQLite database for buffer storage"""
         try:
-            if os.path.exists(self.buffer_file):
-                with open(self.buffer_file, 'rb') as f:
-                    saved_buffer = pickle.load(f)
-                    with self.buffer_lock:
-                        self.buffer = deque(saved_buffer, maxlen=self.port_config.get('buffer_size', 10000))
-                    logger.info(f"[{self.port_name}] Loaded {len(self.buffer)} buffered messages from disk")
-                    if len(self.buffer) > 0:
-                        logger.info(f"[{self.port_name}] Buffer will be sent when TCP connection is established")
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS buffer (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        data BLOB NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                conn.commit()
+                conn.close()
+            logger.debug(f"[{self.port_name}] Database initialized at {self.db_file}")
         except Exception as e:
-            logger.error(f"[{self.port_name}] Error loading buffer from disk: {e}")
+            logger.error(f"[{self.port_name}] Error initializing database: {e}")
+    
+    def load_buffer(self):
+        """Load buffer from SQLite database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute('SELECT data, timestamp FROM buffer ORDER BY id ASC')
+                rows = cursor.fetchall()
+                conn.close()
+            
+            if rows:
+                with self.buffer_lock:
+                    self.buffer.clear()
+                    for data, timestamp in rows:
+                        self.buffer.append({
+                            'data': data,
+                            'timestamp': timestamp
+                        })
+                
+                logger.info(f"[{self.port_name}] Loaded {len(self.buffer)} buffered messages from database")
+                if len(self.buffer) > 0:
+                    logger.info(f"[{self.port_name}] Buffer will be sent when TCP connection is established")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error loading buffer from database: {e}")
             # If there's an error, start with empty buffer
             with self.buffer_lock:
                 self.buffer = deque(maxlen=self.port_config.get('buffer_size', 10000))
     
     def save_buffer(self):
-        """Save buffer to disk for persistence across restarts"""
+        """Save current buffer to SQLite database"""
         try:
             with self.buffer_lock:
                 buffer_list = list(self.buffer)
             
-            # Only save if there's data in the buffer
-            if buffer_list:
-                with open(self.buffer_file, 'wb') as f:
-                    pickle.dump(buffer_list, f)
-                logger.debug(f"[{self.port_name}] Saved {len(buffer_list)} buffered messages to disk")
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                
+                # Clear existing buffer
+                cursor.execute('DELETE FROM buffer')
+                
+                # Insert all buffer items
+                for item in buffer_list:
+                    cursor.execute(
+                        'INSERT INTO buffer (data, timestamp) VALUES (?, ?)',
+                        (item['data'], item['timestamp'])
+                    )
+                
+                conn.commit()
+                conn.close()
+            
+            logger.debug(f"[{self.port_name}] Saved {len(buffer_list)} buffered messages to database")
         except Exception as e:
-            logger.error(f"[{self.port_name}] Error saving buffer to disk: {e}")
+            logger.error(f"[{self.port_name}] Error saving buffer to database: {e}")
     
     def connect_serial(self):
         """Connect to serial port"""
@@ -202,13 +251,17 @@ class SinglePortForwarder:
             
             # Update persistent storage after flushing
             if len(self.buffer) == 0:
-                # Remove buffer file if empty
+                # Clear database if empty
                 try:
-                    if os.path.exists(self.buffer_file):
-                        os.remove(self.buffer_file)
-                        logger.debug(f"[{self.port_name}] Removed empty buffer file")
+                    with self.db_lock:
+                        conn = sqlite3.connect(self.db_file)
+                        cursor = conn.cursor()
+                        cursor.execute('DELETE FROM buffer')
+                        conn.commit()
+                        conn.close()
+                    logger.debug(f"[{self.port_name}] Cleared empty buffer from database")
                 except Exception as e:
-                    logger.error(f"[{self.port_name}] Error removing buffer file: {e}")
+                    logger.error(f"[{self.port_name}] Error clearing database: {e}")
             else:
                 # Save remaining buffer
                 self.save_buffer()
@@ -308,6 +361,9 @@ class SinglePortForwarder:
         # Wait for threads to finish
         for thread in self.threads:
             thread.join(timeout=2)
+        
+        # Save any remaining buffered data to database before closing
+        self.save_buffer()
         
         # Close connections
         if self.serial_port and self.serial_port.is_open:
