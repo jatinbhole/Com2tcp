@@ -56,7 +56,7 @@ Edit `config.json` to set your default configuration:
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `serial_port` | Serial port device path | `/dev/ttyUSB0` |
-| `serial_baudrate` | Baud rate (9600, 19200, 38400, 57600, 115200) | `9600` |
+| `serial_baudrate` | Baud rate (300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600) | `9600` |
 | `serial_bytesize` | Data bits (5, 6, 7, 8) | `8` |
 | `serial_parity` | Parity (N=None, E=Even, O=Odd) | `N` |
 | `serial_stopbits` | Stop bits (1, 2) | `1` |

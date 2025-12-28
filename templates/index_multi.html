@@ -541,11 +541,19 @@
                         <div class="form-group">
                             <label>Baud Rate:</label>
                             <select class="baudrate-${index}">
+                                <option value="300" ${port.serial_baudrate == 300 ? 'selected' : ''}>300</option>
+                                <option value="600" ${port.serial_baudrate == 600 ? 'selected' : ''}>600</option>
+                                <option value="1200" ${port.serial_baudrate == 1200 ? 'selected' : ''}>1200</option>
+                                <option value="2400" ${port.serial_baudrate == 2400 ? 'selected' : ''}>2400</option>
+                                <option value="4800" ${port.serial_baudrate == 4800 ? 'selected' : ''}>4800</option>
                                 <option value="9600" ${port.serial_baudrate == 9600 ? 'selected' : ''}>9600</option>
                                 <option value="19200" ${port.serial_baudrate == 19200 ? 'selected' : ''}>19200</option>
                                 <option value="38400" ${port.serial_baudrate == 38400 ? 'selected' : ''}>38400</option>
                                 <option value="57600" ${port.serial_baudrate == 57600 ? 'selected' : ''}>57600</option>
                                 <option value="115200" ${port.serial_baudrate == 115200 ? 'selected' : ''}>115200</option>
+                                <option value="230400" ${port.serial_baudrate == 230400 ? 'selected' : ''}>230400</option>
+                                <option value="460800" ${port.serial_baudrate == 460800 ? 'selected' : ''}>460800</option>
+                                <option value="921600" ${port.serial_baudrate == 921600 ? 'selected' : ''}>921600</option>
                             </select>
                         </div>
                         <div class="form-group">

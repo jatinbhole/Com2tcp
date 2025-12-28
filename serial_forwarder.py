@@ -301,25 +301,31 @@ class SinglePortForwarder:
         while self.running:
             if not self.serial_connected:
                 if not self.connect_serial():
-                    time.sleep(reconnect_interval)
+                    if self.running:  # Only sleep if still running
+                        time.sleep(reconnect_interval)
                     continue
             
             try:
+                if not self.running:  # Check if we should stop
+                    break
+                
                 if self.serial_port and self.serial_port.in_waiting > 0:
                     data = self.serial_port.read(self.serial_port.in_waiting)
                     if data:
                         logger.debug(f"[{self.port_name}] Received {len(data)} bytes from serial port")
                         self.send_data(data)
                 else:
-                    time.sleep(0.01)  # Small delay to prevent busy waiting
+                    time.sleep(0.1)  # Slightly longer delay to prevent busy waiting
             except serial.SerialException as e:
                 logger.error(f"[{self.port_name}] Serial read error: {e}")
                 self.serial_connected = False
                 self.update_status('serial_connected', False)
                 self.update_status('last_error', f"Serial read error: {str(e)}")
-                time.sleep(reconnect_interval)
+                if self.running:
+                    time.sleep(reconnect_interval)
             except Exception as e:
-                logger.error(f"[{self.port_name}] Unexpected error in serial reader: {e}")
+                if self.running:  # Only log if not shutting down
+                    logger.error(f"[{self.port_name}] Unexpected error in serial reader: {e}")
                 time.sleep(1)
         
         logger.info(f"[{self.port_name}] Serial reader thread stopped")
@@ -330,9 +336,10 @@ class SinglePortForwarder:
         reconnect_interval = self.port_config.get('reconnect_interval', 5)
         
         while self.running:
-            if not self.tcp_connected:
+            if not self.tcp_connected and self.running:
                 self.connect_tcp()
-                time.sleep(reconnect_interval)
+                if self.running:
+                    time.sleep(reconnect_interval)
             else:
                 time.sleep(1)  # Check connection status periodically
         
@@ -368,29 +375,44 @@ class SinglePortForwarder:
         logger.info(f"[{self.port_name}] Stopping forwarder")
         self.running = False
         
-        # Wait for threads to finish
-        for thread in self.threads:
-            thread.join(timeout=2)
+        # Wait for reader threads to finish (with timeout)
+        logger.debug(f"[{self.port_name}] Waiting for {len(self.threads)} threads to finish")
+        for i, thread in enumerate(self.threads, 1):
+            if thread.is_alive():
+                logger.debug(f"[{self.port_name}] Waiting for thread {i}/{len(self.threads)}")
+                thread.join(timeout=3)
+                if thread.is_alive():
+                    logger.warning(f"[{self.port_name}] Thread {i} did not stop within timeout")
         
         # Save any remaining buffered data to database before closing
-        self.save_buffer()
+        try:
+            self.save_buffer()
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error saving buffer during stop: {e}")
         
-        # Close connections
-        if self.serial_port and self.serial_port.is_open:
-            self.serial_port.close()
+        # Close serial connection
+        try:
+            if self.serial_port:
+                if hasattr(self.serial_port, 'is_open') and self.serial_port.is_open:
+                    self.serial_port.close()
+                    logger.debug(f"[{self.port_name}] Serial port closed")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error closing serial port: {e}")
         
-        if self.tcp_socket:
-            try:
+        # Close TCP connection
+        try:
+            if self.tcp_socket:
                 self.tcp_socket.close()
-            except:
-                pass
+                logger.debug(f"[{self.port_name}] TCP socket closed")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error closing TCP socket: {e}")
         
         self.serial_connected = False
         self.tcp_connected = False
         self.update_status('serial_connected', False)
         self.update_status('tcp_connected', False)
         
-        logger.info(f"[{self.port_name}] Forwarder stopped")
+        logger.info(f"[{self.port_name}] Forwarder stopped successfully")
         return True
 
 
