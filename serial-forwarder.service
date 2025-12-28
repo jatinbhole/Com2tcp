@@ -1,0 +1,19 @@
+[Unit]
+Description=Serial to TCP Forwarder Web Service
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/path/to/Com2tcp
+ExecStart=/usr/bin/python3 /path/to/Com2tcp/web_service.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=serial-forwarder
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serial to TCP Forwarder - Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .status-indicator.connected {
+            background: #4CAF50;
+            box-shadow: 0 0 8px #4CAF50;
+        }
+        
+        .status-indicator.disconnected {
+            background: #f44336;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .stat:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .stat-value {
+            color: #333;
+            font-weight: bold;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+            margin-right: 10px;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #d32f2f;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .btn-success {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .btn-warning {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: #e68900;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .buffer-item {
+            padding: 8px;
+            background: #f5f5f5;
+            margin-bottom: 5px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        
+        .buffer-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔌 Serial to TCP Forwarder Control Panel</h1>
+            <p>Monitor and configure your serial port to TCP forwarding service</p>
+        </div>
+        
+        <div class="grid">
+            <!-- Status Card -->
+            <div class="card">
+                <h2>📊 Connection Status</h2>
+                <div id="statusCard">
+                    <div class="stat">
+                        <span class="stat-label">Service Status:</span>
+                        <span class="stat-value" id="serviceStatus">
+                            <span class="status-indicator disconnected"></span>Stopped
+                        </span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Serial Port:</span>
+                        <span class="stat-value" id="serialStatus">
+                            <span class="status-indicator disconnected"></span>Disconnected
+                        </span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">TCP Connection:</span>
+                        <span class="stat-value" id="tcpStatus">
+                            <span class="status-indicator disconnected"></span>Disconnected
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Statistics Card -->
+            <div class="card">
+                <h2>📈 Statistics</h2>
+                <div class="stat">
+                    <span class="stat-label">Messages Sent:</span>
+                    <span class="stat-value" id="messagesSent">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Messages Buffered:</span>
+                    <span class="stat-value" id="messagesBuffered">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Buffer Size:</span>
+                    <span class="stat-value" id="bufferSize">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Last Error:</span>
+                    <span class="stat-value" id="lastError" style="font-size: 12px; color: #f44336;">None</span>
+                </div>
+            </div>
+            
+            <!-- Control Card -->
+            <div class="card">
+                <h2>🎮 Controls</h2>
+                <div style="margin-top: 20px;">
+                    <button class="btn btn-success" onclick="startForwarder()">▶ Start Service</button>
+                    <button class="btn btn-danger" onclick="stopForwarder()">⏹ Stop Service</button>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button class="btn btn-warning" onclick="clearBuffer()">🗑️ Clear Buffer</button>
+                </div>
+                <div id="controlAlert" class="alert"></div>
+            </div>
+        </div>
+        
+        <!-- Configuration Card -->
+        <div class="card">
+            <h2>⚙️ Configuration</h2>
+            <div id="configAlert" class="alert"></div>
+            <form id="configForm">
+                <div class="grid">
+                    <div>
+                        <h3 style="margin-bottom: 15px; color: #667eea;">Serial Port Settings</h3>
+                        <div class="form-group">
+                            <label for="serialPort">Serial Port:</label>
+                            <input type="text" id="serialPort" name="serial_port" placeholder="/dev/ttyUSB0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="baudrate">Baud Rate:</label>
+                            <select id="baudrate" name="serial_baudrate">
+                                <option value="9600">9600</option>
+                                <option value="19200">19200</option>
+                                <option value="38400">38400</option>
+                                <option value="57600">57600</option>
+                                <option value="115200">115200</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="bytesize">Data Bits:</label>
+                            <select id="bytesize" name="serial_bytesize">
+                                <option value="5">5</option>
+                                <option value="6">6</option>
+                                <option value="7">7</option>
+                                <option value="8" selected>8</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="parity">Parity:</label>
+                            <select id="parity" name="serial_parity">
+                                <option value="N" selected>None</option>
+                                <option value="E">Even</option>
+                                <option value="O">Odd</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="stopbits">Stop Bits:</label>
+                            <select id="stopbits" name="serial_stopbits">
+                                <option value="1" selected>1</option>
+                                <option value="2">2</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h3 style="margin-bottom: 15px; color: #667eea;">TCP Settings</h3>
+                        <div class="form-group">
+                            <label for="tcpHost">TCP Host:</label>
+                            <input type="text" id="tcpHost" name="tcp_host" placeholder="localhost" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="tcpPort">TCP Port:</label>
+                            <input type="number" id="tcpPort" name="tcp_port" placeholder="5000" min="1" max="65535" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="bufferSize">Buffer Size:</label>
+                            <input type="number" id="bufferSize" name="buffer_size" placeholder="10000" min="100" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="reconnectInterval">Reconnect Interval (seconds):</label>
+                            <input type="number" id="reconnectInterval" name="reconnect_interval" placeholder="5" min="1" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="serialTimeout">Serial Timeout (seconds):</label>
+                            <input type="number" id="serialTimeout" name="serial_timeout" placeholder="1" min="1" step="0.1" required>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <button type="submit" class="btn btn-primary">💾 Save Configuration</button>
+                    <button type="button" class="btn btn-primary" onclick="loadConfig()">🔄 Reload</button>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Buffer View Card -->
+        <div class="card">
+            <h2>📦 Buffer Contents (Last 100 items)</h2>
+            <div id="bufferList" class="buffer-list">
+                <p style="color: #666;">No buffered data</p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-refresh status every 2 seconds
+        setInterval(updateStatus, 2000);
+        setInterval(updateBuffer, 5000);
+        
+        // Load initial configuration and status
+        loadConfig();
+        updateStatus();
+        
+        function updateStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    // Service status
+                    const serviceEl = document.getElementById('serviceStatus');
+                    if (data.running) {
+                        serviceEl.innerHTML = '<span class="status-indicator connected"></span>Running';
+                    } else {
+                        serviceEl.innerHTML = '<span class="status-indicator disconnected"></span>Stopped';
+                    }
+                    
+                    // Serial status
+                    const serialEl = document.getElementById('serialStatus');
+                    if (data.serial_connected) {
+                        serialEl.innerHTML = '<span class="status-indicator connected"></span>Connected';
+                    } else {
+                        serialEl.innerHTML = '<span class="status-indicator disconnected"></span>Disconnected';
+                    }
+                    
+                    // TCP status
+                    const tcpEl = document.getElementById('tcpStatus');
+                    if (data.tcp_connected) {
+                        tcpEl.innerHTML = '<span class="status-indicator connected"></span>Connected';
+                    } else {
+                        tcpEl.innerHTML = '<span class="status-indicator disconnected"></span>Disconnected';
+                    }
+                    
+                    // Statistics
+                    document.getElementById('messagesSent').textContent = data.messages_sent || 0;
+                    document.getElementById('messagesBuffered').textContent = data.messages_buffered || 0;
+                    document.getElementById('bufferSize').textContent = data.buffer_size || 0;
+                    document.getElementById('lastError').textContent = data.last_error || 'None';
+                })
+                .catch(error => console.error('Error fetching status:', error));
+        }
+        
+        function loadConfig() {
+            fetch('/api/config')
+                .then(response => response.json())
+                .then(config => {
+                    document.getElementById('serialPort').value = config.serial_port || '';
+                    document.getElementById('baudrate').value = config.serial_baudrate || 9600;
+                    document.getElementById('bytesize').value = config.serial_bytesize || 8;
+                    document.getElementById('parity').value = config.serial_parity || 'N';
+                    document.getElementById('stopbits').value = config.serial_stopbits || 1;
+                    document.getElementById('tcpHost').value = config.tcp_host || '';
+                    document.getElementById('tcpPort').value = config.tcp_port || 5000;
+                    document.getElementById('bufferSize').value = config.buffer_size || 10000;
+                    document.getElementById('reconnectInterval').value = config.reconnect_interval || 5;
+                    document.getElementById('serialTimeout').value = config.serial_timeout || 1;
+                })
+                .catch(error => console.error('Error loading config:', error));
+        }
+        
+        document.getElementById('configForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const config = {};
+            
+            formData.forEach((value, key) => {
+                // Convert numeric values
+                if (['serial_baudrate', 'serial_bytesize', 'serial_stopbits', 'tcp_port', 'buffer_size', 'reconnect_interval'].includes(key)) {
+                    config[key] = parseInt(value);
+                } else if (key === 'serial_timeout') {
+                    config[key] = parseFloat(value);
+                } else {
+                    config[key] = value;
+                }
+            });
+            
+            fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                showAlert('configAlert', data.success ? 'success' : 'error', 
+                         data.message || data.error);
+                if (data.success) {
+                    loadConfig();
+                }
+            })
+            .catch(error => {
+                showAlert('configAlert', 'error', 'Failed to save configuration: ' + error);
+            });
+        });
+        
+        function startForwarder() {
+            fetch('/api/start', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    showAlert('controlAlert', data.success ? 'success' : 'error',
+                             data.message || data.error);
+                    updateStatus();
+                })
+                .catch(error => {
+                    showAlert('controlAlert', 'error', 'Failed to start forwarder: ' + error);
+                });
+        }
+        
+        function stopForwarder() {
+            fetch('/api/stop', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    showAlert('controlAlert', data.success ? 'success' : 'error',
+                             data.message || data.error);
+                    updateStatus();
+                })
+                .catch(error => {
+                    showAlert('controlAlert', 'error', 'Failed to stop forwarder: ' + error);
+                });
+        }
+        
+        function clearBuffer() {
+            if (confirm('Are you sure you want to clear the buffer? This will delete all buffered messages.')) {
+                fetch('/api/clear_buffer', {method: 'POST'})
+                    .then(response => response.json())
+                    .then(data => {
+                        showAlert('controlAlert', data.success ? 'success' : 'error',
+                                 data.message || data.error);
+                        updateStatus();
+                        updateBuffer();
+                    })
+                    .catch(error => {
+                        showAlert('controlAlert', 'error', 'Failed to clear buffer: ' + error);
+                    });
+            }
+        }
+        
+        function updateBuffer() {
+            fetch('/api/buffer')
+                .then(response => response.json())
+                .then(data => {
+                    const bufferList = document.getElementById('bufferList');
+                    if (data.total_size === 0) {
+                        bufferList.innerHTML = '<p style="color: #666;">No buffered data</p>';
+                    } else {
+                        let html = `<p style="margin-bottom: 10px; font-weight: bold;">Total: ${data.total_size} items</p>`;
+                        data.items.forEach((item, index) => {
+                            html += `<div class="buffer-item">
+                                <strong>#${index + 1}</strong> - 
+                                ${item.timestamp} - 
+                                Size: ${item.size} bytes
+                            </div>`;
+                        });
+                        bufferList.innerHTML = html;
+                    }
+                })
+                .catch(error => console.error('Error fetching buffer:', error));
+        }
+        
+        function showAlert(elementId, type, message) {
+            const alert = document.getElementById(elementId);
+            alert.className = 'alert alert-' + type;
+            alert.textContent = message;
+            alert.style.display = 'block';
+            
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

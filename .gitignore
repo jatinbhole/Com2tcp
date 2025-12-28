@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Persistent buffer file
+buffer.pkl
+
 # C extensions
 *.so
 
