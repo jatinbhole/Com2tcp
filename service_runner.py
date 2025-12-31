@@ -60,7 +60,7 @@ class ServiceRunner:
     def run_web_service(self):
         """Run Flask web service in a thread"""
         try:
-            logger.info("Starting Web Service on 0.0.0.0:8080")
+            logger.info("Starting Web Service on 0.0.0.0:8081")
             # Disable Flask's default signal handlers to use our own
             app.run(
                 host='0.0.0.0',
