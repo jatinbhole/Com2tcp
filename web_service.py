@@ -160,6 +160,9 @@ def get_port_status(port_name):
             return jsonify({'error': 'Forwarder not initialized'}), 500
 
 
+
+
+
 @app.route('/api/config', methods=['GET'])
 def get_config():
     """Get current configuration"""

@@ -850,8 +850,86 @@
         }
         
         function saveConfig() {
-            showAlert('configAlert', 'success', 'Configuration saved successfully');
-            loadConfigFile();
+            // Collect all port configurations from the form new 
+            const ports = [];
+            const container = document.getElementById('configContainer');
+            
+            // Find all unique indices by looking for port-name classes
+            const portNameInputs = container.querySelectorAll('[class*="port-name-"]');
+            const indices = new Set();
+            
+            portNameInputs.forEach(input => {
+                const className = input.className;
+                const match = className.match(/port-name-(\d+)/);
+                if (match) {
+                    indices.add(parseInt(match[1]));
+                }
+            });
+            
+            // Collect data for each port index
+            indices.forEach(index => {
+                const portNameEl = container.querySelector(`.port-name-${index}`);
+                const serialPortEl = container.querySelector(`.serial-port-${index}`);
+                const baudrateEl = container.querySelector(`.baudrate-${index}`);
+                const bytesizeEl = container.querySelector(`.bytesize-${index}`);
+                const parityEl = container.querySelector(`.parity-${index}`);
+                const stopbitsEl = container.querySelector(`.stopbits-${index}`);
+                const timeoutEl = container.querySelector(`.timeout-${index}`);
+                const xonxoffEl = container.querySelector(`.xonxoff-${index}`);
+                const rtsctsEl = container.querySelector(`.rtscts-${index}`);
+                const tcpHostEl = container.querySelector(`.tcp-host-${index}`);
+                const tcpPortEl = container.querySelector(`.tcp-port-${index}`);
+                const bufferSizeEl = container.querySelector(`.buffer-size-${index}`);
+                const reconnectEl = container.querySelector(`.reconnect-${index}`);
+                
+                if (portNameEl && serialPortEl && tcpHostEl && tcpPortEl) {
+                    const port = {
+                        name: portNameEl.value.trim(),
+                        serial_port: serialPortEl.value.trim(),
+                        serial_baudrate: parseInt(baudrateEl ? baudrateEl.value : 9600),
+                        serial_bytesize: parseInt(bytesizeEl ? bytesizeEl.value : 8),
+                        serial_parity: parityEl ? parityEl.value : 'N',
+                        serial_stopbits: parseInt(stopbitsEl ? stopbitsEl.value : 1),
+                        serial_timeout: parseFloat(timeoutEl ? timeoutEl.value : 1),
+                        serial_xonxoff: xonxoffEl ? xonxoffEl.value === 'true' : true,
+                        serial_rtscts: rtsctsEl ? rtsctsEl.value === 'true' : false,
+                        tcp_host: tcpHostEl.value.trim(),
+                        tcp_port: parseInt(tcpPortEl.value),
+                        buffer_size: parseInt(bufferSizeEl ? bufferSizeEl.value : 10000),
+                        reconnect_interval: parseInt(reconnectEl ? reconnectEl.value : 5)
+                    };
+                    
+                    // Validate required fields
+                    if (port.name && port.serial_port && port.tcp_host && port.tcp_port) {
+                        ports.push(port);
+                    }
+                }
+            });
+            
+            if (ports.length === 0) {
+                showAlert('configAlert', 'error', 'At least one port must be configured');
+                return;
+            }
+            
+            // Send configuration to backend
+            fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ports: ports})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('configAlert', 'success', data.message || 'Configuration saved successfully');
+                    loadConfigFile();
+                    updateAllPorts();
+                } else {
+                    showAlert('configAlert', 'error', data.error || 'Failed to save configuration');
+                }
+            })
+            .catch(error => {
+                showAlert('configAlert', 'error', 'Failed to save configuration: ' + error);
+            });
         }
         
         function startAllPorts() {
