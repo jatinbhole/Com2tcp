@@ -34,6 +34,19 @@ login_manager.login_view = 'login'
 multi_forwarder = None
 forwarder_lock = threading.Lock()
 
+
+# Forwarder changes
+def set_forwarder(forwarder):
+    """
+    Inject the running MultiPortForwarder instance
+    from service_runner.py
+    """
+    global multi_forwarder
+    with forwarder_lock:
+        multi_forwarder = forwarder
+
+
+
 # Credentials file path
 CREDENTIALS_FILE = 'credentials.json'
 
@@ -443,4 +456,4 @@ if __name__ == '__main__':
     with forwarder_lock:
         multi_forwarder = MultiPortForwarder()
     
-    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=8081, debug=False, use_reloader=False)

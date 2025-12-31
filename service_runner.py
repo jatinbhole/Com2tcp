@@ -3,7 +3,7 @@
 Unified Service Runner
 Runs both the Web Service (Flask) and Serial Forwarder as a single service
 Supports graceful shutdown with proper cleanup
-
+Modified with forwarder
 Requirements:
 - Python 3.8 only
 """
@@ -22,7 +22,8 @@ if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
     sys.exit(1)
 
 from serial_forwarder import MultiPortForwarder
-from web_service import app
+#from web_service import app
+from web_service import app, set_forwarder
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,7 @@ class ServiceRunner:
     def __init__(self):
         self.running = True
         self.forwarder = MultiPortForwarder()
+        set_forwarder(self.forwarder)
         self.flask_thread = None
         self.forwarder_thread = None
         self.shutdown_event = threading.Event()
@@ -58,11 +60,11 @@ class ServiceRunner:
     def run_web_service(self):
         """Run Flask web service in a thread"""
         try:
-            logger.info("Starting Web Service on 0.0.0.0:8080")
+            logger.info("Starting Web Service on 0.0.0.0:8081")
             # Disable Flask's default signal handlers to use our own
             app.run(
                 host='0.0.0.0',
-                port=8080,
+                port=8081,
                 debug=False,
                 use_reloader=False,
                 use_debugger=False,
