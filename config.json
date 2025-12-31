@@ -10,23 +10,8 @@
             "serial_timeout": 1,
             "serial_xonxoff": true,
             "serial_rtscts": false,
-            "tcp_host": "localhost",
-            "tcp_port": 5000,
-            "buffer_size": 10000,
-            "reconnect_interval": 5
-        },
-        {
-            "name": "port2",
-            "serial_port": "/dev/ttyUSB1",
-            "serial_baudrate": 9600,
-            "serial_bytesize": 8,
-            "serial_parity": "N",
-            "serial_stopbits": 1,
-            "serial_timeout": 1,
-            "serial_xonxoff": true,
-            "serial_rtscts": false,
-            "tcp_host": "localhost",
-            "tcp_port": 5001,
+            "tcp_host": "192.168.21.15",
+            "tcp_port": 8090,
             "buffer_size": 10000,
             "reconnect_interval": 5
         }

@@ -22,7 +22,8 @@ if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
     sys.exit(1)
 
 from serial_forwarder import MultiPortForwarder
-from web_service import app
+#from web_service import app
+from web_service import app, set_forwarder
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,7 @@ class ServiceRunner:
     def __init__(self):
         self.running = True
         self.forwarder = MultiPortForwarder()
+        set_forwarder(self.forwarder)
         self.flask_thread = None
         self.forwarder_thread = None
         self.shutdown_event = threading.Event()
@@ -62,7 +64,7 @@ class ServiceRunner:
             # Disable Flask's default signal handlers to use our own
             app.run(
                 host='0.0.0.0',
-                port=8080,
+                port=8081,
                 debug=False,
                 use_reloader=False,
                 use_debugger=False,

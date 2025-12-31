@@ -34,6 +34,19 @@ login_manager.login_view = 'login'
 multi_forwarder = None
 forwarder_lock = threading.Lock()
 
+
+# Forwarder changes
+def set_forwarder(forwarder):
+    """
+    Inject the running MultiPortForwarder instance
+    from service_runner.py
+    """
+    global multi_forwarder
+    with forwarder_lock:
+        multi_forwarder = forwarder
+
+
+
 # Credentials file path
 CREDENTIALS_FILE = 'credentials.json'
 
