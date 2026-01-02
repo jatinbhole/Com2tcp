@@ -64,7 +64,7 @@ class ServiceRunner:
             # Disable Flask's default signal handlers to use our own
             app.run(
                 host='0.0.0.0',
-                port=8081,
+                port=9001,
                 debug=False,
                 use_reloader=False,
                 use_debugger=False,
