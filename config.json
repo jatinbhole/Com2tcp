@@ -13,7 +13,8 @@
             "tcp_host": "192.168.21.18",
             "tcp_port": 8090,
             "buffer_size": 10000,
-            "reconnect_interval": 5
+            "reconnect_interval": 5,
+            "send_delay": 5
         }
     ]
 }

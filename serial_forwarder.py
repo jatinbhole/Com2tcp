@@ -54,6 +54,11 @@ class SinglePortForwarder:
         self.tcp_socket = None
         self.tcp_connected = False
         
+        # Serial data accumulation buffer
+        self.serial_accumulator = bytearray()
+        self.serial_accumulator_lock = threading.Lock()
+        self.last_serial_data_time = None
+        
         # Buffer for storing data when TCP connection is lost
         buffer_size = port_config.get('buffer_size', 10000)
         self.buffer = deque(maxlen=buffer_size)
@@ -68,6 +73,9 @@ class SinglePortForwarder:
         
         # Load any existing buffered data from disk
         self.load_buffer()
+        
+        # Load any pending accumulated serial data
+        self.load_pending_data()
         
         # Status tracking
         self.status = {
@@ -100,6 +108,15 @@ class SinglePortForwarder:
                         timestamp TEXT NOT NULL,
                         sent INTEGER DEFAULT 0,
                         sent_timestamp TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                # Table for pending accumulated serial data (not yet sent due to 5s delay)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pending_data (
+                        id INTEGER PRIMARY KEY,
+                        data BLOB NOT NULL,
+                        last_update TEXT NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
@@ -150,6 +167,56 @@ class SinglePortForwarder:
             # If there's an error, start with empty buffer
             with self.buffer_lock:
                 self.buffer = deque(maxlen=self.port_config.get('buffer_size', 10000))
+    
+    def load_pending_data(self):
+        """Load pending accumulated serial data from database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute('SELECT data, last_update FROM pending_data WHERE id = 1')
+                row = cursor.fetchone()
+                conn.close()
+            
+            if row:
+                data, last_update = row
+                with self.serial_accumulator_lock:
+                    self.serial_accumulator = bytearray(data)
+                    self.last_serial_data_time = time.time()  # Reset timer to send soon
+                logger.info(f"[{self.port_name}] Restored {len(data)} bytes of pending accumulated data from database (last update: {last_update})")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error loading pending data from database: {e}")
+    
+    def save_pending_data(self):
+        """Save pending accumulated serial data to database"""
+        try:
+            with self.serial_accumulator_lock:
+                if self.serial_accumulator:
+                    data = bytes(self.serial_accumulator)
+                    timestamp = datetime.now().isoformat()
+                else:
+                    # No pending data, clear the table
+                    with self.db_lock:
+                        conn = sqlite3.connect(self.db_file)
+                        cursor = conn.cursor()
+                        cursor.execute('DELETE FROM pending_data WHERE id = 1')
+                        conn.commit()
+                        conn.close()
+                    return
+            
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO pending_data (id, data, last_update) 
+                    VALUES (1, ?, ?)
+                ''', (data, timestamp))
+                conn.commit()
+                conn.close()
+            
+            logger.debug(f"[{self.port_name}] Saved {len(data)} bytes of pending accumulated data to database")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error saving pending data to database: {e}")
     
     def save_buffer(self):
         """Save current buffer to SQLite database with transaction safety"""
@@ -236,6 +303,19 @@ class SinglePortForwarder:
 
             self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_socket.settimeout(5)
+            
+            # Enable TCP keepalive for faster disconnect detection
+            self.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            
+            # Windows-specific keepalive settings (1s idle, 500ms interval)
+            try:
+                self.tcp_socket.ioctl(
+                    socket.SIO_KEEPALIVE_VALS,
+                    (1, 1000, 500)  # enable, 1000ms idle time, 500ms probe interval
+                )
+            except (OSError, AttributeError):
+                # Not Windows or ioctl not supported, use standard keepalive
+                pass
 
             self.tcp_socket.connect(
                 (self.port_config['tcp_host'], self.port_config['tcp_port'])
@@ -448,9 +528,13 @@ class SinglePortForwarder:
             return False
     
     def serial_reader_thread(self):
-        """Thread to read data from serial port and forward to TCP"""
+        """Thread to read data from serial port and accumulate before sending"""
         logger.info(f"[{self.port_name}] Serial reader thread started")
         reconnect_interval = self.port_config.get('reconnect_interval', 5)
+        send_delay = self.port_config.get('send_delay', 5)  # Wait 5 seconds after last data
+        check_interval = 0.1  # Check every 100ms
+        last_pending_save = time.time()
+        pending_save_interval = 2  # Save pending data every 2 seconds
         
         while self.running:
             if not self.serial_connected:
@@ -463,13 +547,45 @@ class SinglePortForwarder:
                 if not self.running:  # Check if we should stop
                     break
                 
+                # Read incoming serial data and accumulate it
                 if self.serial_port and self.serial_port.in_waiting > 0:
                     data = self.serial_port.read(self.serial_port.in_waiting)
                     if data and self.running:  # Check running flag before processing
-                        logger.debug(f"[{self.port_name}] Received {len(data)} bytes from serial port")
-                        self.send_data(data)
+                        with self.serial_accumulator_lock:
+                            self.serial_accumulator.extend(data)
+                            self.last_serial_data_time = time.time()
+                        logger.debug(f"[{self.port_name}] Accumulated {len(data)} bytes (total: {len(self.serial_accumulator)} bytes)")
+                        
+                        # Periodically save pending data to database for persistence
+                        if time.time() - last_pending_save >= pending_save_interval:
+                            self.save_pending_data()
+                            last_pending_save = time.time()
                 else:
-                    time.sleep(0.1)
+                    # Check if we should send accumulated data
+                    with self.serial_accumulator_lock:
+                        if (self.serial_accumulator and 
+                            self.last_serial_data_time and 
+                            (time.time() - self.last_serial_data_time) >= send_delay):
+                            
+                            # Send all accumulated data
+                            data_to_send = bytes(self.serial_accumulator)
+                            total_bytes = len(data_to_send)
+                            logger.info(f"[{self.port_name}] Sending accumulated data: {total_bytes} bytes (idle for {send_delay}s)")
+                            
+                            if self.send_data(data_to_send):
+                                logger.info(f"[{self.port_name}] Successfully sent {total_bytes} bytes")
+                            else:
+                                logger.warning(f"[{self.port_name}] Failed to send {total_bytes} bytes - data buffered")
+                            
+                            # Clear accumulator after sending
+                            self.serial_accumulator.clear()
+                            self.last_serial_data_time = None
+                            
+                            # Clear pending data from database
+                            self.save_pending_data()
+                    
+                    time.sleep(check_interval)
+                    
             except serial.SerialException as e:
                 if self.running:  # Only log if not shutting down
                     logger.error(f"[{self.port_name}] Serial read error: {e}")
@@ -481,6 +597,17 @@ class SinglePortForwarder:
                 if self.running:  # Only log if not shutting down
                     logger.error(f"[{self.port_name}] Unexpected error in serial reader: {e}")
                     time.sleep(1)
+        
+        # Send any remaining data before stopping
+        with self.serial_accumulator_lock:
+            if self.serial_accumulator:
+                data_to_send = bytes(self.serial_accumulator)
+                logger.info(f"[{self.port_name}] Sending final accumulated data on shutdown: {len(data_to_send)} bytes")
+                self.send_data(data_to_send)
+                self.serial_accumulator.clear()
+        
+        # Save any remaining pending data to database
+        self.save_pending_data()
         
         logger.info(f"[{self.port_name}] Serial reader thread stopped")
     
@@ -585,6 +712,17 @@ class SinglePortForwarder:
         
         logger.info(f"[{self.port_name}] All threads stopped")
         
+        # Save any pending accumulated data first
+        try:
+            with self.serial_accumulator_lock:
+                pending_count = len(self.serial_accumulator)
+            
+            if pending_count > 0:
+                logger.info(f"[{self.port_name}] Saving {pending_count} bytes of pending accumulated data before shutdown")
+                self.save_pending_data()
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error saving pending data during stop: {e}")
+        
         # NOW save buffer - threads are stopped, no more data will be added
         try:
             with self.buffer_lock:
@@ -662,7 +800,8 @@ class MultiPortForwarder:
                     'tcp_host': 'localhost',
                     'tcp_port': 5000,
                     'buffer_size': 10000,
-                    'reconnect_interval': 5
+                    'reconnect_interval': 5,
+                    'send_delay': 5
                 }
             ]
         }
