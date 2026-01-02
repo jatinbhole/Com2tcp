@@ -74,6 +74,7 @@ class SinglePortForwarder:
             'port_name': port_name,
             'serial_connected': False,
             'tcp_connected': False,
+            'tcp_state': 'disconnected', 
             'buffer_size': 0,
             'messages_sent': 0,
             'messages_buffered': 0,
@@ -218,31 +219,63 @@ class SinglePortForwarder:
             logger.error(f"[{self.port_name}] Failed to connect to serial port: {e}")
             return False
     
+   
+
     def connect_tcp(self):
-        """Connect to TCP server"""
+        """Connect to TCP server (with proper state handling)"""
         try:
+            #  Mark as CONNECTING immediately (important for UI)
+            self.update_status('tcp_state', 'connecting')
+            self.update_status('tcp_connected', False)
+
             if self.tcp_socket:
                 try:
                     self.tcp_socket.close()
                 except:
                     pass
-            
+
             self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_socket.settimeout(5)
-            self.tcp_socket.connect((self.port_config['tcp_host'], self.port_config['tcp_port']))
+
+            self.tcp_socket.connect(
+                (self.port_config['tcp_host'], self.port_config['tcp_port'])
+            )
+
+            #  Connected successfully
             self.tcp_connected = True
             self.update_status('tcp_connected', True)
-            logger.info(f"[{self.port_name}] Connected to TCP server {self.port_config['tcp_host']}:{self.port_config['tcp_port']}")
-            
-            # Send buffered data after reconnection
+            self.update_status('tcp_state', 'connected')
+
+            logger.info(
+                f"[{self.port_name}] Connected to TCP server "
+                f"{self.port_config['tcp_host']}:{self.port_config['tcp_port']}"
+            )
+
+            #  Flush buffered data AFTER successful connect
             self.flush_buffer()
             return True
+
         except Exception as e:
+            #  Connection failed
             self.tcp_connected = False
             self.update_status('tcp_connected', False)
+            self.update_status('tcp_state', 'disconnected')
             self.update_status('last_error', f"TCP connection error: {str(e)}")
-            logger.error(f"[{self.port_name}] Failed to connect to TCP server: {e}")
+
+            logger.error(
+                f"[{self.port_name}] Failed to connect to TCP server: {e}"
+            )
+
+            # Ensure socket is fully cleaned up
+            try:
+                if self.tcp_socket:
+                    self.tcp_socket.close()
+            except:
+                pass
+
+            self.tcp_socket = None
             return False
+
     
     def update_status(self, key, value):
         """Thread-safe status update"""

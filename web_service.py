@@ -34,6 +34,9 @@ login_manager.login_view = 'login'
 multi_forwarder = None
 forwarder_lock = threading.Lock()
 
+# added function
+def normalize_config(config):
+    return json.dumps(config, sort_keys=True)
 
 # Forwarder changes
 def set_forwarder(forwarder):
@@ -177,51 +180,90 @@ def get_config():
 
 @app.route('/api/config', methods=['POST'])
 def update_config():
-    """Update configuration"""
+    """Update configuration (restart ONLY if config changed)"""
     try:
         new_config = request.get_json()
-        
-        # Validate configuration
+
+        # -------------------------
+        # Validation
+        # -------------------------
         if 'ports' not in new_config:
             return jsonify({'success': False, 'error': 'Missing ports configuration'}), 400
-        
+
         ports = new_config.get('ports', [])
         if not ports:
             return jsonify({'success': False, 'error': 'At least one port must be configured'}), 400
-        
-        # Validate each port
+
         for port in ports:
             required_fields = ['name', 'serial_port', 'serial_baudrate', 'tcp_host', 'tcp_port']
             for field in required_fields:
                 if field not in port:
-                    return jsonify({'success': False, 'error': f'Missing required field in port: {field}'}), 400
-        
+                    return jsonify({
+                        'success': False,
+                        'error': f'Missing required field in port: {field}'
+                    }), 400
+
         with forwarder_lock:
             global multi_forwarder
-            
-            # Stop existing forwarder if running
+
+            # ------------------------------------------
+            # Load current config from disk (source of truth)
+            # ------------------------------------------
+            current_config = None
+            if multi_forwarder:
+                try:
+                    with open(multi_forwarder.config_file, 'r') as f:
+                        current_config = json.load(f)
+                except Exception:
+                    current_config = None
+
+            # ------------------------------------------
+            #  CRITICAL FIX: normalized comparison
+            # ------------------------------------------
+            if current_config and normalize_config(current_config) == normalize_config(new_config):
+                logger.info("Configuration unchanged – skipping restart")
+                return jsonify({
+                    'success': True,
+                    'message': 'Configuration unchanged'
+                })
+
+            logger.info("Configuration changed – applying update")
+
+            # ------------------------------------------
+            # Detect running state
+            # ------------------------------------------
             was_running = False
             if multi_forwarder:
-                # Get running status before stopping
-                for forwarder in multi_forwarder.forwarders.values():
-                    if forwarder.running:
-                        was_running = True
-                        break
+                was_running = any(
+                    f.running for f in multi_forwarder.forwarders.values()
+                )
                 multi_forwarder.stop()
-            
-            # Create new forwarder with updated config
-            multi_forwarder = MultiPortForwarder()
+
+            # ------------------------------------------
+            # Save new config
+            # ------------------------------------------
+            if not multi_forwarder:
+                multi_forwarder = MultiPortForwarder()
+
             multi_forwarder.save_config(new_config)
-            
-            # Restart if it was running
+
+            # ------------------------------------------
+            # Restart ONLY if previously running
+            # ------------------------------------------
             if was_running:
                 multi_forwarder.start()
-        
-        return jsonify({'success': True, 'message': 'Configuration updated successfully'})
-    
+
+        return jsonify({
+            'success': True,
+            'message': 'Configuration updated successfully'
+        })
+
     except Exception as e:
-        logger.error(f"Error updating config: {e}")
+        logger.error("Error updating config", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+
 
 
 @app.route('/api/change_password', methods=['POST'])
