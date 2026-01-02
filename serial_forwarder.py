@@ -111,15 +111,6 @@ class SinglePortForwarder:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-                # Table for pending accumulated serial data (not yet sent due to 5s delay)
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS pending_data (
-                        id INTEGER PRIMARY KEY,
-                        data BLOB NOT NULL,
-                        last_update TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
                 conn.commit()
                 conn.close()
             logger.debug(f"[{self.port_name}] Database initialized at {self.db_file}")
@@ -134,10 +125,10 @@ class SinglePortForwarder:
                 cursor = conn.cursor()
                 # Handle old schema without sent columns by using SELECT with defaults
                 try:
-                    cursor.execute('SELECT data, timestamp, sent, sent_timestamp FROM buffer ORDER BY id ASC')
+                    cursor.execute('SELECT data, timestamp, sent, sent_timestamp FROM buffer WHERE timestamp != "PENDING_ACCUMULATOR" ORDER BY id ASC')
                 except sqlite3.OperationalError:
                     # Fallback for old schema
-                    cursor.execute('SELECT data, timestamp FROM buffer ORDER BY id ASC')
+                    cursor.execute('SELECT data, timestamp FROM buffer WHERE timestamp != "PENDING_ACCUMULATOR" ORDER BY id ASC')
                 rows = cursor.fetchall()
                 conn.close()
             
@@ -169,57 +160,76 @@ class SinglePortForwarder:
                 self.buffer = deque(maxlen=self.port_config.get('buffer_size', 10000))
     
     def load_pending_data(self):
-        """Load pending accumulated serial data from database"""
+        """Load pending accumulated serial data from buffer table"""
         try:
             with self.db_lock:
                 conn = sqlite3.connect(self.db_file)
                 cursor = conn.cursor()
-                cursor.execute('SELECT data, last_update FROM pending_data WHERE id = 1')
+                # Use special timestamp marker to identify pending accumulator data
+                cursor.execute('SELECT data, timestamp FROM buffer WHERE timestamp = "PENDING_ACCUMULATOR"')
                 row = cursor.fetchone()
                 conn.close()
             
             if row:
-                data, last_update = row
+                data, _ = row
                 with self.serial_accumulator_lock:
                     self.serial_accumulator = bytearray(data)
                     self.last_serial_data_time = time.time()  # Reset timer to send soon
-                logger.info(f"[{self.port_name}] Restored {len(data)} bytes of pending accumulated data from database (last update: {last_update})")
+                logger.info(f"[{self.port_name}] Restored {len(data)} bytes of pending accumulated data from database")
+                logger.info(f"[{self.port_name}] Data will be sent after {self.port_config.get('send_delay', 5)}s delay or immediately if TCP is available")
         except Exception as e:
             logger.error(f"[{self.port_name}] Error loading pending data from database: {e}")
     
     def save_pending_data(self):
-        """Save pending accumulated serial data to database"""
+        """Save or clear pending accumulated serial data in buffer table
+        
+        This is used for data that's being accumulated during the 5-second wait.
+        Only deletes from DB after successful TCP send.
+        """
         try:
-            with self.serial_accumulator_lock:
-                if self.serial_accumulator:
-                    data = bytes(self.serial_accumulator)
-                    timestamp = datetime.now().isoformat()
-                else:
-                    # No pending data, clear the table
-                    with self.db_lock:
-                        conn = sqlite3.connect(self.db_file)
-                        cursor = conn.cursor()
-                        cursor.execute('DELETE FROM pending_data WHERE id = 1')
-                        conn.commit()
-                        conn.close()
-                    return
-            
             with self.db_lock:
                 conn = sqlite3.connect(self.db_file)
                 cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT OR REPLACE INTO pending_data (id, data, last_update) 
-                    VALUES (1, ?, ?)
-                ''', (data, timestamp))
+                
+                # Always delete existing pending entry first
+                cursor.execute('DELETE FROM buffer WHERE timestamp = "PENDING_ACCUMULATOR"')
+                
+                # Check if there's data to save
+                with self.serial_accumulator_lock:
+                    if self.serial_accumulator:
+                        data = bytes(self.serial_accumulator)
+                    else:
+                        data = None
+                
+                # Insert new pending data if exists (data still accumulating)
+                if data:
+                    cursor.execute('''
+                        INSERT INTO buffer (data, timestamp, sent) 
+                        VALUES (?, "PENDING_ACCUMULATOR", 0)
+                    ''', (data,))
+                    logger.debug(f"[{self.port_name}] Saved {len(data)} bytes of pending accumulated data to database")
+                
                 conn.commit()
                 conn.close()
-            
-            logger.debug(f"[{self.port_name}] Saved {len(data)} bytes of pending accumulated data to database")
+                
         except Exception as e:
             logger.error(f"[{self.port_name}] Error saving pending data to database: {e}")
     
     def save_buffer(self):
-        """Save current buffer to SQLite database with transaction safety"""
+        """Save current buffer to SQLite database with transaction safety
+        
+        BUFFER TABLE USE CASES:
+        1. Regular entries (timestamp != PENDING_ACCUMULATOR):
+           - Data that FAILED to send via TCP because connection was down
+           - Marked with sent=0 (unsent) or sent=1 (successfully sent)
+           - These are retried when TCP reconnects (flush_buffer)
+        
+        2. PENDING_ACCUMULATOR entry (timestamp = PENDING_ACCUMULATOR):
+           - Data currently being accumulated during 5-second send delay
+           - Saved every 2 seconds for crash recovery
+           - Only deleted AFTER successful TCP send
+           - If service restarts, this data is restored and sent
+        """
         try:
             with self.buffer_lock:
                 buffer_list = list(self.buffer)
@@ -232,8 +242,8 @@ class SinglePortForwarder:
                     # Use transaction for atomicity
                     cursor.execute('BEGIN TRANSACTION')
                     
-                    # Clear existing buffer
-                    cursor.execute('DELETE FROM buffer')
+                    # Clear existing buffer but keep PENDING_ACCUMULATOR
+                    cursor.execute('DELETE FROM buffer WHERE timestamp != "PENDING_ACCUMULATOR"')
                     
                     # Insert all buffer items
                     for item in buffer_list:
@@ -574,15 +584,21 @@ class SinglePortForwarder:
                             
                             if self.send_data(data_to_send):
                                 logger.info(f"[{self.port_name}] Successfully sent {total_bytes} bytes")
+                                
+                                # Clear accumulator after successful send
+                                self.serial_accumulator.clear()
+                                self.last_serial_data_time = None
+                                
+                                # Clear pending data from database (only after successful send)
+                                self.save_pending_data()
                             else:
-                                logger.warning(f"[{self.port_name}] Failed to send {total_bytes} bytes - data buffered")
-                            
-                            # Clear accumulator after sending
-                            self.serial_accumulator.clear()
-                            self.last_serial_data_time = None
-                            
-                            # Clear pending data from database
-                            self.save_pending_data()
+                                logger.warning(f"[{self.port_name}] Failed to send {total_bytes} bytes - data buffered, will retry")
+                                # Data is already in buffer table, accumulator stays in PENDING_ACCUMULATOR
+                                # Clear accumulator since it's now in regular buffer
+                                self.serial_accumulator.clear()
+                                self.last_serial_data_time = None
+                                # Clear PENDING_ACCUMULATOR since data moved to regular buffer
+                                self.save_pending_data()
                     
                     time.sleep(check_interval)
                     
