@@ -1,11 +1,19 @@
+# updated code 
 """
-Serial Port to TCP Forwarder with Buffering
+Serial Port to TCP Forwarder with Buffering - FIXED VERSION
 Forwards data from serial ports to TCP connections with automatic buffering on disconnect
 Supports multiple serial ports with independent TCP forwarding
 Uses SQLite for persistent buffer storage
 
 Requirements:
 - Python 3.8 only
+
+FIXES:
+1. Proper buffer flushing - only mark as sent after successful TCP send
+2. Atomic database operations with transactions
+3. Race condition fixes in stop() - save buffer AFTER threads stop
+4. Proper thread coordination during shutdown
+5. No data loss on Ctrl+C or crash
 """
 import sys
 import serial
@@ -132,9 +140,10 @@ class SinglePortForwarder:
                             'sent_timestamp': sent_timestamp
                         })
                 
-                logger.info(f"[{self.port_name}] Loaded {len(self.buffer)} buffered messages from database")
-                if len(self.buffer) > 0:
-                    logger.info(f"[{self.port_name}] Buffer will be sent when TCP connection is established")
+                unsent_count = len([item for item in self.buffer if item.get('sent') == 0])
+                logger.info(f"[{self.port_name}] Loaded {len(self.buffer)} buffered messages from database ({unsent_count} unsent)")
+                if unsent_count > 0:
+                    logger.info(f"[{self.port_name}] {unsent_count} unsent messages will be sent when TCP connection is established")
         except Exception as e:
             logger.error(f"[{self.port_name}] Error loading buffer from database: {e}")
             # If there's an error, start with empty buffer
@@ -142,7 +151,7 @@ class SinglePortForwarder:
                 self.buffer = deque(maxlen=self.port_config.get('buffer_size', 10000))
     
     def save_buffer(self):
-        """Save current buffer to SQLite database"""
+        """Save current buffer to SQLite database with transaction safety"""
         try:
             with self.buffer_lock:
                 buffer_list = list(self.buffer)
@@ -151,22 +160,33 @@ class SinglePortForwarder:
                 conn = sqlite3.connect(self.db_file)
                 cursor = conn.cursor()
                 
-                # Clear existing buffer
-                cursor.execute('DELETE FROM buffer')
+                try:
+                    # Use transaction for atomicity
+                    cursor.execute('BEGIN TRANSACTION')
+                    
+                    # Clear existing buffer
+                    cursor.execute('DELETE FROM buffer')
+                    
+                    # Insert all buffer items
+                    for item in buffer_list:
+                        cursor.execute(
+                            'INSERT INTO buffer (data, timestamp, sent, sent_timestamp) VALUES (?, ?, ?, ?)',
+                            (item['data'], item['timestamp'], item.get('sent', 0), item.get('sent_timestamp', None))
+                        )
+                    
+                    cursor.execute('COMMIT')
+                    logger.debug(f"[{self.port_name}] Saved {len(buffer_list)} buffered messages to database")
+                    
+                except Exception as e:
+                    cursor.execute('ROLLBACK')
+                    logger.error(f"[{self.port_name}] Error in save_buffer transaction, rolled back: {e}")
+                    raise
                 
-                # Insert all buffer items
-                for item in buffer_list:
-                    cursor.execute(
-                        'INSERT INTO buffer (data, timestamp, sent, sent_timestamp) VALUES (?, ?, ?, ?)',
-                        (item['data'], item['timestamp'], item.get('sent', 0), item.get('sent_timestamp', None))
-                    )
-                
-                conn.commit()
-                conn.close()
+                finally:
+                    conn.close()
             
-            logger.debug(f"[{self.port_name}] Saved {len(buffer_list)} buffered messages to database")
         except Exception as e:
-            logger.error(f"[{self.port_name}] Error saving buffer to database: {e}")
+            logger.error(f"[{self.port_name}] CRITICAL: Error saving buffer to database: {e}")
     
     def connect_serial(self):
         """Connect to serial port"""
@@ -246,10 +266,19 @@ class SinglePortForwarder:
                 'sent_timestamp': None
             })
             self.update_status('messages_buffered', self.status['messages_buffered'] + 1)
-            logger.debug(f"[{self.port_name}] Buffered data: {len(data)} bytes. Buffer size: {len(self.buffer)}")
+            buffer_size = len(self.buffer)
+            logger.debug(f"[{self.port_name}] Buffered data: {len(data)} bytes. Buffer size: {buffer_size}")
+            
+            # Warn if buffer is getting full (80% capacity)
+            max_size = self.buffer.maxlen
+            if max_size and buffer_size > max_size * 0.8:
+                logger.warning(f"[{self.port_name}] Buffer is {(buffer_size/max_size)*100:.1f}% full ({buffer_size}/{max_size})")
         
         # Save buffer to disk for persistence
-        self.save_buffer()
+        try:
+            self.save_buffer()
+        except Exception as e:
+            logger.error(f"[{self.port_name}] CRITICAL: Failed to save buffer to disk: {e}")
     
     def cleanup_old_buffer(self):
         """Remove sent messages older than 1 month from buffer"""
@@ -283,46 +312,84 @@ class SinglePortForwarder:
         except Exception as e:
             logger.error(f"[{self.port_name}] Error cleaning up old buffer: {e}")
     
+
     def flush_buffer(self):
-        """Send all buffered data when connection is restored"""
+        """Send all buffered data when connection is restored - SAFE VERSION"""
         if not self.tcp_connected or not self.tcp_socket:
             return
-        
+
+        # Step 1: Snapshot unsent items with indices
         with self.buffer_lock:
-            buffer_size = len(self.buffer)
-            if buffer_size == 0:
+            if not self.buffer:
                 return
-            
-            # Filter to get only unsent messages
-            unsent_items = [item for item in self.buffer if item.get('sent') == 0]
-            
-            if len(unsent_items) == 0:
-                # Clean up old sent data
-                self.cleanup_old_buffer()
-                return
-            
-            logger.info(f"[{self.port_name}] Flushing {len(unsent_items)} buffered messages")
-            
-            for item in unsent_items:
-                try:
-                    self.tcp_socket.sendall(item['data'])
-                    # Mark as sent and record sent timestamp
-                    item['sent'] = 1
-                    item['sent_timestamp'] = datetime.now().isoformat()
-                    self.update_status('messages_sent', self.status['messages_sent'] + 1)
-                except Exception as e:
-                    logger.error(f"[{self.port_name}] Error flushing buffer: {e}")
-                    break
-            
-            unsent_count = len([i for i in self.buffer if i.get('sent') == 0])
-            logger.info(f"[{self.port_name}] Buffer flush complete. Remaining unsent: {unsent_count}")
-            
-            # Clean up old sent data and save remaining buffer
+
+            unsent_items = [
+                (idx, item)
+                for idx, item in enumerate(self.buffer)
+                if item.get('sent') == 0
+            ]
+
+        if not unsent_items:
             self.cleanup_old_buffer()
+            return
+
+        logger.info(f"[{self.port_name}] Flushing {len(unsent_items)} buffered messages")
+
+        # Step 2: Send data WITHOUT holding lock
+        successfully_sent_indices = []
+
+        for idx, item in unsent_items:
+            try:
+                self.tcp_socket.sendall(item['data'])
+                successfully_sent_indices.append(idx)
+                self.update_status(
+                    'messages_sent',
+                    self.status['messages_sent'] + 1
+                )
+            except Exception as e:
+                logger.error(f"[{self.port_name}] Error flushing buffer at index {idx}: {e}")
+
+                # Mark TCP as disconnected
+                self.tcp_connected = False
+                self.update_status('tcp_connected', False)
+
+                try:
+                    self.tcp_socket.close()
+                except:
+                    pass
+
+                self.tcp_socket = None
+                break  # STOP on first failure
+
+        # Step 3: Mark sent items atomically
+        if successfully_sent_indices:
+            with self.buffer_lock:
+                sent_timestamp = datetime.now().isoformat()
+
+                for idx in successfully_sent_indices:
+                    if idx < len(self.buffer):
+                        self.buffer[idx]['sent'] = 1
+                        self.buffer[idx]['sent_timestamp'] = sent_timestamp
+
+            # Persist buffer AFTER marking sent
             self.save_buffer()
+
+        # Step 4: Log + cleanup
+        with self.buffer_lock:
+            unsent_count = sum(
+                1 for item in self.buffer if item.get('sent') == 0
+            )
+
+        logger.info(
+            f"[{self.port_name}] Buffer flush complete. Remaining unsent: {unsent_count}"
+        )
+
+        self.cleanup_old_buffer()
+
+   
     
     def send_data(self, data):
-        """Send data via TCP or buffer it if connection is lost"""
+        """Send data via TCP or buffer it if connection is lost - FIXED VERSION"""
         if self.tcp_connected and self.tcp_socket:
             try:
                 self.tcp_socket.sendall(data)
@@ -332,6 +399,15 @@ class SinglePortForwarder:
                 logger.error(f"[{self.port_name}] Error sending data via TCP: {e}")
                 self.tcp_connected = False
                 self.update_status('tcp_connected', False)
+                
+                # Close the broken socket to force reconnection
+                try:
+                    self.tcp_socket.close()
+                except:
+                    pass
+                self.tcp_socket = None
+                
+                # Add to buffer AFTER marking TCP as disconnected
                 self.add_to_buffer(data)
                 return False
         else:
@@ -356,39 +432,61 @@ class SinglePortForwarder:
                 
                 if self.serial_port and self.serial_port.in_waiting > 0:
                     data = self.serial_port.read(self.serial_port.in_waiting)
-                    if data:
+                    if data and self.running:  # Check running flag before processing
                         logger.debug(f"[{self.port_name}] Received {len(data)} bytes from serial port")
                         self.send_data(data)
                 else:
-                    time.sleep(0.1)  # Slightly longer delay to prevent busy waiting
+                    time.sleep(0.1)
             except serial.SerialException as e:
-                logger.error(f"[{self.port_name}] Serial read error: {e}")
-                self.serial_connected = False
-                self.update_status('serial_connected', False)
-                self.update_status('last_error', f"Serial read error: {str(e)}")
-                if self.running:
+                if self.running:  # Only log if not shutting down
+                    logger.error(f"[{self.port_name}] Serial read error: {e}")
+                    self.serial_connected = False
+                    self.update_status('serial_connected', False)
+                    self.update_status('last_error', f"Serial read error: {str(e)}")
                     time.sleep(reconnect_interval)
             except Exception as e:
                 if self.running:  # Only log if not shutting down
                     logger.error(f"[{self.port_name}] Unexpected error in serial reader: {e}")
-                time.sleep(1)
+                    time.sleep(1)
         
         logger.info(f"[{self.port_name}] Serial reader thread stopped")
     
+  
     def tcp_reconnect_thread(self):
-        """Thread to maintain TCP connection"""
+        """Thread to maintain and verify TCP connection"""
         logger.info(f"[{self.port_name}] TCP reconnect thread started")
         reconnect_interval = self.port_config.get('reconnect_interval', 5)
-        
+
         while self.running:
+            if self.tcp_connected and self.tcp_socket:
+                try:
+                    self.tcp_socket.settimeout(0.5)
+                    data = self.tcp_socket.recv(1, socket.MSG_PEEK)
+
+                    if data == b'':
+                        raise ConnectionError("TCP peer closed connection")
+
+                except Exception:
+                    logger.warning(f"[{self.port_name}] TCP connection lost")
+                    self.tcp_connected = False
+                    self.update_status('tcp_connected', False)
+
+                    try:
+                        self.tcp_socket.close()
+                    except:
+                        pass
+
+                    self.tcp_socket = None
+
             if not self.tcp_connected and self.running:
                 self.connect_tcp()
-                if self.running:
-                    time.sleep(reconnect_interval)
+                time.sleep(reconnect_interval)
             else:
-                time.sleep(1)  # Check connection status periodically
-        
+                time.sleep(1)
+
         logger.info(f"[{self.port_name}] TCP reconnect thread stopped")
+
+
     
     def cleanup_thread(self):
         """Thread to periodically clean up old sent messages from buffer"""
@@ -404,8 +502,8 @@ class SinglePortForwarder:
                 
                 time.sleep(cleanup_interval)
             except Exception as e:
-                logger.error(f"[{self.port_name}] Error in cleanup thread: {e}")
-                if self.running:
+                if self.running:  # Only log if not shutting down
+                    logger.error(f"[{self.port_name}] Error in cleanup thread: {e}")
                     time.sleep(cleanup_interval)
         
         logger.info(f"[{self.port_name}] Buffer cleanup thread stopped")
@@ -433,28 +531,39 @@ class SinglePortForwarder:
         return True
     
     def stop(self):
-        """Stop the forwarder for this port"""
+        """Stop the forwarder for this port - FIXED VERSION"""
         if not self.running:
             logger.warning(f"[{self.port_name}] Forwarder is not running")
             return False
         
         logger.info(f"[{self.port_name}] Stopping forwarder")
+        
+        # CRITICAL FIX: Set running flag to False FIRST
         self.running = False
         
-        # Wait for reader threads to finish (with timeout)
+        # Wait for ALL threads to finish BEFORE saving buffer
         logger.debug(f"[{self.port_name}] Waiting for {len(self.threads)} threads to finish")
         for i, thread in enumerate(self.threads, 1):
             if thread.is_alive():
                 logger.debug(f"[{self.port_name}] Waiting for thread {i}/{len(self.threads)}")
-                thread.join(timeout=3)
+                thread.join(timeout=5)  # Increased timeout
                 if thread.is_alive():
                     logger.warning(f"[{self.port_name}] Thread {i} did not stop within timeout")
         
-        # Save any remaining buffered data to database before closing
+        logger.info(f"[{self.port_name}] All threads stopped")
+        
+        # NOW save buffer - threads are stopped, no more data will be added
         try:
+            with self.buffer_lock:
+                unsent_count = len([item for item in self.buffer if item.get('sent') == 0])
+            
+            if unsent_count > 0:
+                logger.info(f"[{self.port_name}] Saving {unsent_count} unsent messages to database before shutdown")
+            
             self.save_buffer()
+            logger.info(f"[{self.port_name}] Buffer saved successfully")
         except Exception as e:
-            logger.error(f"[{self.port_name}] Error saving buffer during stop: {e}")
+            logger.error(f"[{self.port_name}] CRITICAL: Error saving buffer during stop: {e}")
         
         # Close serial connection
         try:
@@ -626,5 +735,6 @@ if __name__ == '__main__':
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt")
+        logger.info("Received keyboard interrupt - shutting down gracefully")
         forwarder.stop()
+        logger.info("Shutdown complete")

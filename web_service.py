@@ -20,7 +20,7 @@ if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
     print("Error: Python 3.8 only is required")
     print(f"Current version: {sys.version}")
     sys.exit(1)
-from serial_forwarder import MultiPortForwarder
+from serial_forwarder_old import MultiPortForwarder
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-this-secret-key-in-production')

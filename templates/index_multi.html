@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -507,9 +508,9 @@
         
         <!-- Tabs -->
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('ports')">📊 Ports</button>
-            <button class="tab-btn" onclick="switchTab('config')">⚙️ Configuration</button>
-            <button class="tab-btn" onclick="switchTab('buffer')">📦 Buffer Status</button>
+            <button class="tab-btn active" onclick="switchTab('ports',this)">📊 Ports</button>
+            <button class="tab-btn" onclick="switchTab('config',this)">⚙️ Configuration</button>
+            <button class="tab-btn" onclick="switchTab('buffer',this)">📦 Buffer Status</button>
         </div>
         
         <!-- Ports Tab -->
@@ -555,6 +556,9 @@
     </div>
     
     <script>
+        // Global variable to track current configuration
+        let currentPorts = [];
+        
         // Auto-refresh status
         setInterval(updateAllPorts, 2000);
         setInterval(updateAllBuffers, 5000);
@@ -565,14 +569,15 @@
             loadConfigFile();
         });
         
-        function switchTab(tab) {
+        function switchTab(tab,e1) {
             // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
             
             // Show selected tab
             document.getElementById(tab).classList.add('active');
-            event.target.classList.add('active');
+            //event.target.classList.add('active');
+            el.classList.add('active');
         }
         
         function updateAllPorts() {
@@ -696,27 +701,8 @@
             fetch('/api/config')
                 .then(response => response.json())
                 .then(config => {
-                    const container = document.getElementById('configContainer');
-                    let html = '';
-                    
-                    const ports = config.ports || [];
-                    
-                    if (ports.length === 0) {
-                        html = '<p style="color: #666;">No ports configured</p>';
-                    } else {
-                        ports.forEach((port, index) => {
-                            html += createPortConfigForm(port, index);
-                        });
-                    }
-                    
-                    html += `
-                        <div class="control-buttons" style="margin-top: 30px;">
-                            <button class="btn btn-primary" onclick="addPort()">+ Add New Port</button>
-                            <button class="btn btn-success" onclick="saveConfig()">💾 Save All Changes</button>
-                        </div>
-                    `;
-                    
-                    container.innerHTML = html;
+                    currentPorts = config.ports || [];
+                    renderConfig();
                 })
                 .catch(error => console.error('Error loading config:', error));
         }
@@ -821,6 +807,28 @@
             `;
         }
         
+        function renderConfig() {
+            const container = document.getElementById('configContainer');
+            let html = '';
+            
+            if (currentPorts.length === 0) {
+                html = '<p style="color: #666;">No ports configured</p>';
+            } else {
+                currentPorts.forEach((port, index) => {
+                    html += createPortConfigForm(port, index);
+                });
+            }
+            
+            html += `
+                <div class="control-buttons" style="margin-top: 30px;">
+                    <button class="btn btn-primary" onclick="addPort()">+ Add New Port</button>
+                    <button class="btn btn-success" onclick="saveConfig()">💾 Save All Changes</button>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+        }
+        
         function addPort() {
             const newPort = {
                 name: 'port' + (new Date().getTime() % 10000),
@@ -838,19 +846,21 @@
                 reconnect_interval: 5
             };
             
-            showAlert('configAlert', 'success', 'New port added. Configure it and save.');
-            loadConfigFile();
+            currentPorts.push(newPort);
+            renderConfig();
+            showAlert('configAlert', 'success', 'New port added. Configure it and save changes.');
         }
         
         function removePort(index) {
             if (confirm('Remove this port configuration?')) {
+                currentPorts.splice(index, 1);
+                renderConfig();
                 showAlert('configAlert', 'success', 'Port removed. Save changes to apply.');
-                loadConfigFile();
             }
         }
         
         function saveConfig() {
-            // Collect all port configurations from the form new 
+            // Collect all port configurations from the form
             const ports = [];
             const container = document.getElementById('configContainer');
             
@@ -883,6 +893,16 @@
                 const reconnectEl = container.querySelector(`.reconnect-${index}`);
                 
                 if (portNameEl && serialPortEl && tcpHostEl && tcpPortEl) {
+                    //  TCP port validation
+                    const tcpPort = parseInt(tcpPortEl.value);
+                    if (!tcpPort || tcpPort < 1 || tcpPort > 65535) {
+                        showAlert(
+                            'configAlert',
+                            'error',
+                            `Invalid TCP port for ${portNameEl.value}. Must be 1–65535`
+                        );
+                        return;
+                    }
                     const port = {
                         name: portNameEl.value.trim(),
                         serial_port: serialPortEl.value.trim(),
@@ -894,7 +914,8 @@
                         serial_xonxoff: xonxoffEl ? xonxoffEl.value === 'true' : true,
                         serial_rtscts: rtsctsEl ? rtsctsEl.value === 'true' : false,
                         tcp_host: tcpHostEl.value.trim(),
-                        tcp_port: parseInt(tcpPortEl.value),
+                        //tcp_port: parseInt(tcpPortEl.value),
+                        tcp_port: parseInt(tcpPortEl.value) || 0,
                         buffer_size: parseInt(bufferSizeEl ? bufferSizeEl.value : 10000),
                         reconnect_interval: parseInt(reconnectEl ? reconnectEl.value : 5)
                     };
@@ -910,7 +931,14 @@
                 showAlert('configAlert', 'error', 'At least one port must be configured');
                 return;
             }
-            
+
+            //validation for unique port names 
+            const names = ports.map(p => p.name);
+            if (new Set(names).size !== names.length) {
+                showAlert('configAlert', 'error', 'Port names must be unique');
+                return;
+            }
+                        
             // Send configuration to backend
             fetch('/api/config', {
                 method: 'POST',
