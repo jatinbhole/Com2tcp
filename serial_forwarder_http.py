@@ -299,10 +299,16 @@ class SinglePortHTTPForwarder:
         reconnect_interval = self.port_config.get('reconnect_interval', 5)
         
         while self.running:
+            if not self.running:
+                break
+                
             if not self.serial_connected:
                 if not self.connect_serial():
-                    if self.running:
-                        time.sleep(reconnect_interval)
+                    # Sleep in small increments to allow quick exit
+                    for _ in range(int(reconnect_interval * 10)):
+                        if not self.running:
+                            break
+                        time.sleep(0.1)
                     continue
             
             try:
@@ -322,7 +328,11 @@ class SinglePortHTTPForwarder:
                     self.serial_connected = False
                     self.update_status('serial_connected', False)
                     self.update_status('last_error', f"Serial read error: {str(e)}")
-                    time.sleep(reconnect_interval)
+                    # Sleep in small increments to allow quick exit
+                    for _ in range(int(reconnect_interval * 10)):
+                        if not self.running:
+                            break
+                        time.sleep(0.1)
             except Exception as e:
                 if self.running:
                     logger.error(f"[{self.port_name}] Unexpected error in serial reader: {e}")
@@ -335,6 +345,9 @@ class SinglePortHTTPForwarder:
         logger.info(f"[{self.port_name}] Buffer timeout thread started")
         
         while self.running:
+            if not self.running:
+                break
+                
             try:
                 current_time = time.time()
                 
@@ -365,8 +378,16 @@ class SinglePortHTTPForwarder:
         logger.info(f"[{self.port_name}] Retry pending messages thread started")
         
         while self.running:
+            # Sleep in small increments to allow quick exit
+            for _ in range(int(self.retry_interval * 2)):
+                if not self.running:
+                    break
+                time.sleep(0.5)
+            
+            if not self.running:
+                break
+                
             try:
-                time.sleep(self.retry_interval)
                 
                 messages = self._get_pending_messages()
                 

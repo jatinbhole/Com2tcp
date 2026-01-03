@@ -71,13 +71,14 @@ class ServiceRunner:
         """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}. Starting graceful shutdown...")
         self.shutdown()
-        sys.exit(0)
+        # Don't call sys.exit() here - let the main loop exit naturally
     
     def run_web_service(self):
         """Run Flask web service in a thread"""
         try:
-            logger.info("Starting Web Service on 0.0.0.0:8085")
+            logger.info("Starting Web Service on 0.0.0.0:9001")
             # Disable Flask's default signal handlers to use our own
+            # Use a separate thread to monitor shutdown event
             app.run(
                 host='0.0.0.0',
                 port=9001,
@@ -87,7 +88,8 @@ class ServiceRunner:
                 threaded=True
             )
         except Exception as e:
-            logger.error(f"Error in web service: {e}")
+            if self.running:
+                logger.error(f"Error in web service: {e}")
         finally:
             logger.info("Web Service stopped")
     
@@ -145,15 +147,18 @@ class ServiceRunner:
             # Give forwarders time to initialize
             time.sleep(2)
             
-            # Start Web Service (blocking)
-            self.run_web_service()
+            # Start Web Service (blocking - will run until shutdown)
+            if self.running:
+                self.run_web_service()
         
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
         except Exception as e:
             logger.error(f"Error during service startup: {e}")
         finally:
-            self.shutdown()
+            if self.running:
+                self.shutdown()
+            logger.info("Service runner exiting")
     
     def shutdown(self):
         """Gracefully shutdown both services"""
