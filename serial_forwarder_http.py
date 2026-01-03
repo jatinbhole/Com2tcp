@@ -240,8 +240,7 @@ class SinglePortHTTPForwarder:
             }
             
             logger.info(f"[{self.port_name}] Sending message ID {message_id}: {len(data_to_send)} bytes to {self.http_url} -> {self.tcp_host}:{self.tcp_port}")
-            logger.info(f"[{self.port_name}] Sending message {data_to_send}")
-           
+          
             logger.debug(f"[{self.port_name}] Data checksum: {sum(data_to_send) % 256}")
             
             response = requests.post(
@@ -424,9 +423,13 @@ class SinglePortHTTPForwarder:
         for i, thread in enumerate(self.threads, 1):
             if thread.is_alive():
                 logger.debug(f"[{self.port_name}] Waiting for thread {i}/{len(self.threads)}")
-                thread.join(timeout=5)
-                if thread.is_alive():
-                    logger.warning(f"[{self.port_name}] Thread {i} did not stop within timeout")
+                try:
+                    thread.join(timeout=5)
+                    if thread.is_alive():
+                        logger.warning(f"[{self.port_name}] Thread {i} did not stop within timeout")
+                except KeyboardInterrupt:
+                    logger.warning(f"[{self.port_name}] Interrupted while waiting for thread {i}, forcing exit")
+                    break
         
         logger.info(f"[{self.port_name}] All threads stopped")
         
@@ -528,8 +531,13 @@ def main():
             
     except KeyboardInterrupt:
         logger.info("Received keyboard interrupt, stopping...")
-        forwarder.stop()
-        logger.info("Forwarder stopped gracefully")
+        try:
+            forwarder.stop()
+            logger.info("Forwarder stopped gracefully")
+        except KeyboardInterrupt:
+            logger.warning("Interrupted during cleanup, forcing exit")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 
 if __name__ == '__main__':
