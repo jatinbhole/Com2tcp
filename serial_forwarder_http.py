@@ -123,7 +123,11 @@ class SinglePortHTTPForwarder:
         
         # Send via HTTP POST
         try:
+            # Encode data as hex string for JSON transmission
+            data_hex = data_to_send.hex()
+            
             payload = {
+                'data': data_hex,
                 'datahost': self.tcp_host,
                 'tcp_port': self.tcp_port,
                 'source_port': self.port_name
@@ -333,7 +337,7 @@ def main():
     """Main function"""
     # Load configuration
     import sys
-    config_file = 'config_http.json' if len(sys.argv) < 2 else sys.argv[1]
+    config_file = 'config.json' if len(sys.argv) < 2 else sys.argv[1]
     
     try:
         with open(config_file, 'r') as f:

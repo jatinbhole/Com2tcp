@@ -9,8 +9,8 @@ from flask import Flask, request, jsonify
 import threading
 
 # Check Python version - 3.8 only
-if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
-    print("Error: Python 3.8 only is required")
+if sys.version_info < (3, 8) or sys.version_info >= (3, 10):
+    print("Error: Python 3.8 or 3.9 is required")
     print(f"Current version: {sys.version}")
     sys.exit(1)
 
