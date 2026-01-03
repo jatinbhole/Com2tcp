@@ -468,6 +468,74 @@
             border: 1px solid #f5c6cb;
         }
         
+        /* Toast Notification Styles */
+        .toast-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 300px;
+            max-width: 500px;
+            transform: translateX(calc(100% + 40px));
+            transition: transform 0.3s ease-in-out;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        .toast-notification.show {
+            transform: translateX(0);
+        }
+        
+        .toast-notification.toast-success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+        }
+        
+        .toast-notification.toast-error {
+            background: linear-gradient(135deg, #dc3545 0%, #f8577c 100%);
+            color: white;
+        }
+        
+        .toast-notification.toast-info {
+            background: linear-gradient(135deg, #17a2b8 0%, #5bc0de 100%);
+            color: white;
+        }
+        
+        .toast-icon {
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+        
+        .toast-message {
+            flex: 1;
+        }
+        
+        .toast-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+        
+        .toast-close:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        
         .buffer-item {
             padding: 8px;
             background: #f5f5f5;
@@ -991,15 +1059,23 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    // Show both inline alert and toast notification
                     showAlert('configAlert', 'success', data.message || 'Configuration saved successfully');
-                    loadConfigFile();
-                    updateAllPorts();
+                    showToast('✓ ' + (data.message || 'Configuration saved and services restarting...'), 'success', 6000);
+                    
+                    // Reload config and update status after a short delay to allow restart
+                    setTimeout(() => {
+                        loadConfigFile();
+                        updateAllPorts();
+                    }, 2000);
                 } else {
                     showAlert('configAlert', 'error', data.error || 'Failed to save configuration');
+                    showToast('Failed to save configuration: ' + (data.error || 'Unknown error'), 'error');
                 }
             })
             .catch(error => {
                 showAlert('configAlert', 'error', 'Failed to save configuration: ' + error);
+                showToast('Failed to save configuration: ' + error, 'error');
             });
         }
         
@@ -1076,6 +1152,41 @@
             setTimeout(() => {
                 alert.style.display = 'none';
             }, 5000);
+        }
+        
+        // Toast notification function for prominent alerts
+        function showToast(message, type = 'success', duration = 5000) {
+            // Remove existing toast if any
+            const existingToast = document.querySelector('.toast-notification');
+            if (existingToast) {
+                existingToast.remove();
+            }
+            
+            // Create toast element
+            const toast = document.createElement('div');
+            toast.className = `toast-notification toast-${type}`;
+            
+            // Set icon based on type
+            let icon = '✓';
+            if (type === 'error') icon = '✕';
+            else if (type === 'info') icon = 'ℹ';
+            
+            toast.innerHTML = `
+                <div class="toast-icon">${icon}</div>
+                <div class="toast-message">${message}</div>
+                <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            // Trigger animation
+            setTimeout(() => toast.classList.add('show'), 10);
+            
+            // Auto-remove after duration
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
         }
         
         function openPasswordModal() {

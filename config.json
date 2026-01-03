@@ -2,7 +2,7 @@
     "ports": [
         {
             "name": "port1",
-            "serial_port": "COM96",
+            "serial_port": "COM40",
             "serial_baudrate": 2400,
             "serial_bytesize": 7,
             "serial_parity": "N",

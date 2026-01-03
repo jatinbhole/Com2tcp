@@ -436,23 +436,31 @@ class SinglePortHTTPForwarder:
         
         logger.info(f"[{self.port_name}] Stopping HTTP forwarder")
         
-        # Set running flag to False
+        # Set running flag to False FIRST
         self.running = False
         
-        # Wait for all threads to finish
+        # Close serial port immediately to stop reading
+        if self.serial_port and self.serial_port.is_open:
+            try:
+                self.serial_port.close()
+                logger.info(f"[{self.port_name}] Serial port closed")
+            except Exception as e:
+                logger.error(f"[{self.port_name}] Error closing serial port: {e}")
+        
+        # Wait for all threads to finish with reduced timeout
         logger.debug(f"[{self.port_name}] Waiting for {len(self.threads)} threads to finish")
         for i, thread in enumerate(self.threads, 1):
             if thread.is_alive():
                 logger.debug(f"[{self.port_name}] Waiting for thread {i}/{len(self.threads)}")
                 try:
-                    thread.join(timeout=5)
+                    thread.join(timeout=2)  # Reduced timeout from 5 to 2 seconds
                     if thread.is_alive():
-                        logger.warning(f"[{self.port_name}] Thread {i} did not stop within timeout")
+                        logger.warning(f"[{self.port_name}] Thread {i} did not stop within timeout - continuing anyway")
                 except KeyboardInterrupt:
                     logger.warning(f"[{self.port_name}] Interrupted while waiting for thread {i}, forcing exit")
                     break
         
-        logger.info(f"[{self.port_name}] All threads stopped")
+        logger.info(f"[{self.port_name}] Thread cleanup completed")
         
         # Send any remaining buffered data
         with self.buffer_lock:
@@ -509,11 +517,21 @@ class MultiPortHTTPForwarder:
             return False
         
         logger.info("Stopping MultiPortHTTPForwarder")
-        
-        for port_name, forwarder in self.forwarders.items():
-            forwarder.stop()
-        
         self.running = False
+        
+        # Stop all forwarders in parallel using threads for faster shutdown
+        stop_threads = []
+        for port_name, forwarder in self.forwarders.items():
+            thread = threading.Thread(target=forwarder.stop, daemon=True)
+            thread.start()
+            stop_threads.append((port_name, thread))
+        
+        # Wait for all stop operations to complete with timeout
+        for port_name, thread in stop_threads:
+            thread.join(timeout=3)
+            if thread.is_alive():
+                logger.warning(f"Stop operation for {port_name} did not complete within timeout")
+        
         logger.info("MultiPortHTTPForwarder stopped")
         return True
     

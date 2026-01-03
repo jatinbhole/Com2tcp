@@ -14,6 +14,7 @@ import threading
 import logging
 import json
 import os
+import time
 import serial.tools.list_ports
 
 # Check Python version - 3.8 or 3.9
@@ -49,6 +50,52 @@ def set_forwarder(forwarder):
     global multi_forwarder
     with forwarder_lock:
         multi_forwarder = forwarder
+
+
+def async_restart_forwarder(new_config, was_running):
+    """
+    Asynchronously restart the forwarder with new configuration
+    Runs in a separate thread to avoid blocking the HTTP response
+    """
+    global multi_forwarder
+    
+    try:
+        # Add a small delay to ensure HTTP response is sent
+        time.sleep(0.5)
+        
+        # Step 1: Stop existing forwarder (with lock)
+        with forwarder_lock:
+            if multi_forwarder:
+                logger.info("Async: Stopping existing forwarder...")
+                try:
+                    multi_forwarder.stop()
+                    # Give threads time to clean up
+                    time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Async: Error stopping forwarder: {e}")
+                
+                # Clear the reference
+                multi_forwarder = None
+        
+        # Step 2: Create new forwarder WITHOUT lock (this can be slow)
+        logger.info("Async: Creating new forwarder with updated configuration")
+        new_forwarder = MultiPortHTTPForwarder(new_config)
+        logger.info("Async: New forwarder created successfully")
+        
+        # Step 3: Set the new forwarder and start if needed (with lock, fast operation)
+        with forwarder_lock:
+            multi_forwarder = new_forwarder
+            
+            # Start only if previously running
+            if was_running:
+                logger.info("Async: Starting forwarder with new configuration...")
+                multi_forwarder.start()
+                logger.info("Async: Forwarder started successfully")
+            else:
+                logger.info("Async: Forwarder created but not started (was not running)")
+                
+    except Exception as e:
+        logger.error(f"Async: Error during forwarder restart: {e}", exc_info=True)
 
 
 
@@ -256,11 +303,9 @@ def update_config():
             was_running = False
             if multi_forwarder:
                 was_running = multi_forwarder.running
-                logger.info("Stopping existing forwarder...")
-                multi_forwarder.stop()
 
             # ------------------------------------------
-            # Save new config to file
+            # Save new config to file FIRST
             # ------------------------------------------
             try:
                 with open(config_file, 'w') as f:
@@ -270,22 +315,21 @@ def update_config():
                 logger.error(f"Error saving config file: {e}")
                 return jsonify({'success': False, 'error': f'Failed to save config: {str(e)}'}), 500
 
-            # ------------------------------------------
-            # Create new forwarder with updated config
-            # ------------------------------------------
-            multi_forwarder = MultiPortHTTPForwarder(new_config)
-            set_forwarder(multi_forwarder)
-
-            # ------------------------------------------
-            # Restart ONLY if previously running
-            # ------------------------------------------
-            if was_running:
-                logger.info("Restarting forwarder with new configuration...")
-                multi_forwarder.start()
+        # ------------------------------------------
+        # Start async restart in separate thread
+        # This prevents blocking the HTTP response
+        # ------------------------------------------
+        restart_thread = threading.Thread(
+            target=async_restart_forwarder,
+            args=(new_config, was_running),
+            daemon=True
+        )
+        restart_thread.start()
+        logger.info("Configuration update initiated asynchronously")
 
         return jsonify({
             'success': True,
-            'message': 'Configuration updated successfully'
+            'message': 'Configuration saved and services are restarting...'
         })
 
     except Exception as e:
@@ -438,19 +482,23 @@ def get_buffer_info():
     with forwarder_lock:
         if multi_forwarder:
             buffer_info = {}
-            for port_name, forwarder in multi_forwarder.forwarders.items():
-                with forwarder.buffer_lock:
-                    buffer_data = []
-                    for item in list(forwarder.buffer)[:100]:  # Return last 100 items
-                        buffer_data.append({
-                            'timestamp': item['timestamp'],
-                            'size': len(item['data'])
-                        })
-                    
-                    buffer_info[port_name] = {
-                        'total_size': len(forwarder.buffer),
-                        'items': buffer_data
-                    }
+            try:
+                for port_name, forwarder in multi_forwarder.forwarders.items():
+                    with forwarder.buffer_lock:
+                        buffer_data = []
+                        for item in list(forwarder.buffer)[:100]:  # Return last 100 items
+                            buffer_data.append({
+                                'timestamp': item['timestamp'],
+                                'size': len(item['data'])
+                            })
+                        
+                        buffer_info[port_name] = {
+                            'total_size': len(forwarder.buffer),
+                            'items': buffer_data
+                        }
+            except Exception as e:
+                logger.error(f"Error getting buffer info: {e}")
+                return jsonify({})
             
             return jsonify(buffer_info)
         
