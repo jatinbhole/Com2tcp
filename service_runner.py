@@ -55,6 +55,7 @@ class ServiceRunner:
         self.http_forwarder = MultiPortHTTPForwarder(config)  # Initialize with loaded config
         set_forwarder(self.http_forwarder)  # Pass HTTP forwarder to web service
         self.flask_thread = None
+        self.flask_server = None
         # self.forwarder_thread = None
         self.http_forwarder_thread = None
         self.shutdown_event = threading.Event()
@@ -75,18 +76,22 @@ class ServiceRunner:
     
     def run_web_service(self):
         """Run Flask web service in a thread"""
+        from werkzeug.serving import make_server
+        
         try:
             logger.info("Starting Web Service on 0.0.0.0:9001")
-            # Disable Flask's default signal handlers to use our own
-            # Use a separate thread to monitor shutdown event
-            app.run(
+            # Create a werkzeug server that we can shutdown programmatically
+            self.flask_server = make_server(
                 host='0.0.0.0',
                 port=9001,
-                debug=False,
-                use_reloader=False,
-                use_debugger=False,
+                app=app,
                 threaded=True
             )
+            
+            # Run server in a way that we can interrupt it
+            logger.info("Web Service ready to accept connections")
+            self.flask_server.serve_forever()
+            
         except Exception as e:
             if self.running:
                 logger.error(f"Error in web service: {e}")
@@ -144,12 +149,21 @@ class ServiceRunner:
             )
             self.http_forwarder_thread.start()
             
-            # Give forwarders time to initialize
+            # Start Web Service in a thread
+            self.flask_thread = threading.Thread(
+                target=self.run_web_service,
+                daemon=False,
+                name="FlaskThread"
+            )
+            self.flask_thread.start()
+            
+            # Give services time to initialize
             time.sleep(2)
             
-            # Start Web Service (blocking - will run until shutdown)
-            if self.running:
-                self.run_web_service()
+            # Keep main thread alive and monitor running flag
+            logger.info("All services started. Press Ctrl+C to stop.")
+            while self.running:
+                time.sleep(0.5)
         
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
@@ -172,6 +186,15 @@ class ServiceRunner:
             logger.info("=" * 70)
             logger.info("Starting graceful shutdown sequence...")
             logger.info("=" * 70)
+            
+            # Stop Flask Web Service
+            try:
+                logger.info("Stopping Web Service...")
+                if self.flask_server:
+                    self.flask_server.shutdown()
+                logger.info("Web Service stopped successfully")
+            except Exception as e:
+                logger.error(f"Error stopping web service: {e}")
             
             # Stop Serial Forwarder (TCP)
             # try:
@@ -204,6 +227,13 @@ class ServiceRunner:
                 self.http_forwarder_thread.join(timeout=5)
                 if self.http_forwarder_thread.is_alive():
                     logger.warning("HTTP Forwarder thread did not stop within timeout")
+            
+            # Wait for Flask thread to finish
+            if self.flask_thread and self.flask_thread.is_alive():
+                logger.info("Waiting for Flask thread to finish...")
+                self.flask_thread.join(timeout=5)
+                if self.flask_thread.is_alive():
+                    logger.warning("Flask thread did not stop within timeout")
             
             logger.info("=" * 70)
             logger.info("All services stopped gracefully")
