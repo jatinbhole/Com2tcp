@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Serial to TCP Forwarder - Multi-Port Control Panel</title>
+    <title>Serial to HTTP Forwarder - Multi-Port Control Panel</title>
     <style>
         * {
             margin: 0;
@@ -493,7 +493,7 @@
     <div class="container">
         <div class="header">
             <div class="header-content">
-                <h1>🔌 Serial to TCP Forwarder</h1>
+                <h1>🔌 Serial to HTTP Forwarder</h1>
                 <p>Multi-Port Control Panel - Monitor and configure multiple serial connections</p>
             </div>
             <div class="header-actions">
@@ -606,10 +606,6 @@
                 ? '<span class="status-indicator connected"></span>Connected'
                 : '<span class="status-indicator disconnected"></span>Disconnected';
             
-            const tcpStatus = status.tcp_connected
-                ? '<span class="status-indicator connected"></span>Connected'
-                : '<span class="status-indicator disconnected"></span>Disconnected';
-            
             return `
                 <div class="card">
                     <div class="port-header">
@@ -625,20 +621,20 @@
                         <span class="stat-value">${serialStatus}</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-label">TCP Connection:</span>
-                        <span class="stat-value">${tcpStatus}</span>
+                        <span class="stat-label">HTTP URL:</span>
+                        <span class="stat-value" style="font-size: 0.85em;">${status.http_url || 'N/A'}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Target:</span>
+                        <span class="stat-value">${status.tcp_host || 'N/A'}:${status.tcp_port || 'N/A'}</span>
                     </div>
                     <div class="stat">
                         <span class="stat-label">Messages Sent:</span>
                         <span class="stat-value">${status.messages_sent || 0}</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-label">Buffered:</span>
-                        <span class="stat-value">${status.messages_buffered || 0}</span>
-                    </div>
-                    <div class="stat">
                         <span class="stat-label">Buffer Size:</span>
-                        <span class="stat-value">${status.buffer_size || 0}</span>
+                        <span class="stat-value">${status.buffer_size || 0} bytes</span>
                     </div>
                     <div class="stat">
                         <span class="stat-label">Last Error:</span>

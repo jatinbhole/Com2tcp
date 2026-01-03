@@ -14,6 +14,7 @@ import signal
 import time
 import atexit
 import os
+import json
 
 # Check Python version - 3.8 or 3.9
 if sys.version_info < (3, 8) or sys.version_info >= (3, 10):
@@ -38,8 +39,20 @@ class ServiceRunner:
     
     def __init__(self):
         self.running = True
+        
+        # Load configuration from config.json
+        try:
+            config_file = 'config.json'
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+            logger.info(f"Loaded configuration from {config_file}")
+        except Exception as e:
+            logger.error(f"Error loading config.json: {e}")
+            logger.warning("Using empty configuration")
+            config = {'ports': []}
+        
         # self.forwarder = MultiPortForwarder()
-        self.http_forwarder = MultiPortHTTPForwarder({'ports': []})  # Initialize with empty config, will load later
+        self.http_forwarder = MultiPortHTTPForwarder(config)  # Initialize with loaded config
         set_forwarder(self.http_forwarder)  # Pass HTTP forwarder to web service
         self.flask_thread = None
         # self.forwarder_thread = None

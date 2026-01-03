@@ -142,7 +142,9 @@ def get_status():
     """Get status of all forwarders"""
     with forwarder_lock:
         if multi_forwarder:
-            return jsonify(multi_forwarder.get_status())
+            return jsonify({
+                'forwarders': multi_forwarder.get_status()
+            })
         else:
             return jsonify({
                 'timestamp': '',

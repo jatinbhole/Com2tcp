@@ -502,6 +502,10 @@ class MultiPortHTTPForwarder:
         for port_name, forwarder in self.forwarders.items():
             status[port_name] = forwarder.get_status()
         return status
+    
+    def get_forwarder(self, port_name):
+        """Get a specific forwarder by port name"""
+        return self.forwarders.get(port_name)
 
 
 def main():
