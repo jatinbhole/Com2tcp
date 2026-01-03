@@ -11,9 +11,9 @@ import logging
 from datetime import datetime
 import requests
 
-# Check Python version - 3.8 only
-if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
-    print("Error: Python 3.8 only is required")
+# Check Python version - 3.8 or 3.9
+if sys.version_info < (3, 8) or sys.version_info >= (3, 10):
+    print("Error: Python 3.8 or 3.9 is required")
     print(f"Current version: {sys.version}")
     sys.exit(1)
 
@@ -129,8 +129,7 @@ class SinglePortHTTPForwarder:
                 'source_port': self.port_name
             }
             
-            logger.info(f"[{self.port_name}] Sending {len(data_to_send)} bytes to {self.http_url} -> {self.tcp_host}:{self.tcp_port
-            logger.info(f"[{self.port_name}] Sending {len(data_to_send)} bytes to {self.http_url}")
+            logger.info(f"[{self.port_name}] Sending {len(data_to_send)} bytes to {self.http_url} -> {self.tcp_host}:{self.tcp_port}")
             
             response = requests.post(
                 self.http_url,

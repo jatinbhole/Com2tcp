@@ -15,12 +15,13 @@ import logging
 import json
 import os
 
-# Check Python version - 3.8 only
-if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
-    print("Error: Python 3.8 only is required")
+# Check Python version - 3.8 or 3.9
+if sys.version_info < (3, 8) or sys.version_info >= (3, 10):
+    print("Error: Python 3.8 or 3.9 is required")
     print(f"Current version: {sys.version}")
     sys.exit(1)
-from serial_forwarder_old import MultiPortForwarder
+# from serial_forwarder_old import MultiPortForwarder
+from serial_forwarder_http import MultiPortHTTPForwarder
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-this-secret-key-in-production')

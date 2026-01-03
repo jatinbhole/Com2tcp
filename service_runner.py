@@ -15,13 +15,14 @@ import time
 import atexit
 import os
 
-# Check Python version - 3.8 only
-if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
-    print("Error: Python 3.8 only is required")
+# Check Python version - 3.8 or 3.9
+if sys.version_info < (3, 8) or sys.version_info >= (3, 10):
+    print("Error: Python 3.8 or 3.9 is required")
     print(f"Current version: {sys.version}")
     sys.exit(1)
 
-from serial_forwarder import MultiPortForwarder
+# from serial_forwarder import MultiPortForwarder
+from serial_forwarder_http import MultiPortHTTPForwarder
 #from web_service import app
 from web_service import app, set_forwarder
 
@@ -37,10 +38,12 @@ class ServiceRunner:
     
     def __init__(self):
         self.running = True
-        self.forwarder = MultiPortForwarder()
-        set_forwarder(self.forwarder)
+        # self.forwarder = MultiPortForwarder()
+        self.http_forwarder = MultiPortHTTPForwarder({'ports': []})  # Initialize with empty config, will load later
+        set_forwarder(self.http_forwarder)  # Pass HTTP forwarder to web service
         self.flask_thread = None
-        self.forwarder_thread = None
+        # self.forwarder_thread = None
+        self.http_forwarder_thread = None
         self.shutdown_event = threading.Event()
         self.shutdown_lock = threading.Lock()
         
@@ -75,36 +78,58 @@ class ServiceRunner:
         finally:
             logger.info("Web Service stopped")
     
-    def run_forwarder(self):
-        """Run serial forwarder in a thread"""
+    # def run_forwarder(self):
+    #     """Run serial forwarder in a thread"""
+    #     try:
+    #         logger.info("Starting Serial Forwarder (TCP)")
+    #         self.forwarder.start()
+    #         
+    #         # Keep the forwarder running
+    #         while self.running:
+    #             time.sleep(0.5)
+    #     except Exception as e:
+    #         logger.error(f"Error in TCP forwarder: {e}")
+    #     finally:
+    #         logger.info("Serial Forwarder (TCP) thread exiting")
+    
+    def run_http_forwarder(self):
+        """Run HTTP forwarder in a thread"""
         try:
-            logger.info("Starting Serial Forwarder")
-            self.forwarder.start()
+            logger.info("Starting Serial Forwarder (HTTP)")
+            self.http_forwarder.start()
             
-            # Keep the forwarder running
+            # Keep the HTTP forwarder running
             while self.running:
                 time.sleep(0.5)
         except Exception as e:
-            logger.error(f"Error in forwarder: {e}")
+            logger.error(f"Error in HTTP forwarder: {e}")
         finally:
-            logger.info("Serial Forwarder thread exiting")
+            logger.info("Serial Forwarder (HTTP) thread exiting")
     
     def start(self):
         """Start both services"""
         logger.info("=" * 70)
-        logger.info("Starting Unified Serial Forwarder Service")
+        logger.info("Starting Unified Serial Forwarder Service (HTTP Mode)")
         logger.info("=" * 70)
         
         try:
-            # Start Serial Forwarder in a thread
-            self.forwarder_thread = threading.Thread(
-                target=self.run_forwarder,
-                daemon=False,
-                name="ForwarderThread"
-            )
-            self.forwarder_thread.start()
+            # Start Serial Forwarder (TCP) in a thread
+            # self.forwarder_thread = threading.Thread(
+            #     target=self.run_forwarder,
+            #     daemon=False,
+            #     name="TCPForwarderThread"
+            # )
+            # self.forwarder_thread.start()
             
-            # Give forwarder time to initialize
+            # Start HTTP Forwarder in a thread
+            self.http_forwarder_thread = threading.Thread(
+                target=self.run_http_forwarder,
+                daemon=False,
+                name="HTTPForwarderThread"
+            )
+            self.http_forwarder_thread.start()
+            
+            # Give forwarders time to initialize
             time.sleep(2)
             
             # Start Web Service (blocking)
@@ -130,21 +155,37 @@ class ServiceRunner:
             logger.info("Starting graceful shutdown sequence...")
             logger.info("=" * 70)
             
-            # Stop Serial Forwarder
+            # Stop Serial Forwarder (TCP)
+            # try:
+            #     logger.info("Stopping Serial Forwarder (TCP)...")
+            #     if self.forwarder:
+            #         self.forwarder.stop()
+            #     logger.info("Serial Forwarder (TCP) stopped successfully")
+            # except Exception as e:
+            #     logger.error(f"Error stopping TCP forwarder: {e}")
+            
+            # Stop HTTP Forwarder
             try:
-                logger.info("Stopping Serial Forwarder...")
-                if self.forwarder:
-                    self.forwarder.stop()
-                logger.info("Serial Forwarder stopped successfully")
+                logger.info("Stopping Serial Forwarder (HTTP)...")
+                if self.http_forwarder:
+                    self.http_forwarder.stop()
+                logger.info("Serial Forwarder (HTTP) stopped successfully")
             except Exception as e:
-                logger.error(f"Error stopping forwarder: {e}")
+                logger.error(f"Error stopping HTTP forwarder: {e}")
             
             # Wait for forwarder thread to finish
-            if self.forwarder_thread and self.forwarder_thread.is_alive():
-                logger.info("Waiting for Forwarder thread to finish...")
-                self.forwarder_thread.join(timeout=5)
-                if self.forwarder_thread.is_alive():
-                    logger.warning("Forwarder thread did not stop within timeout")
+            # if self.forwarder_thread and self.forwarder_thread.is_alive():
+            #     logger.info("Waiting for TCP Forwarder thread to finish...")
+            #     self.forwarder_thread.join(timeout=5)
+            #     if self.forwarder_thread.is_alive():
+            #         logger.warning("TCP Forwarder thread did not stop within timeout")
+            
+            # Wait for HTTP forwarder thread to finish
+            if self.http_forwarder_thread and self.http_forwarder_thread.is_alive():
+                logger.info("Waiting for HTTP Forwarder thread to finish...")
+                self.http_forwarder_thread.join(timeout=5)
+                if self.http_forwarder_thread.is_alive():
+                    logger.warning("HTTP Forwarder thread did not stop within timeout")
             
             logger.info("=" * 70)
             logger.info("All services stopped gracefully")
