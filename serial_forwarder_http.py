@@ -193,9 +193,12 @@ class SinglePortHTTPForwarder:
     def add_to_buffer(self, data):
         """Add data to buffer and update timestamp"""
         with self.buffer_lock:
+            before_size = len(self.buffer)
             self.buffer.extend(data)
+            after_size = len(self.buffer)
             self.last_data_time = time.time()
-            logger.debug(f"[{self.port_name}] Added {len(data)} bytes to buffer. Total: {len(self.buffer)} bytes")
+            logger.debug(f"[{self.port_name}] Added {len(data)} bytes to buffer. Buffer: {before_size} -> {after_size} bytes")
+            logger.debug(f"[{self.port_name}] First 20 bytes: {data[:20].hex() if len(data) >= 20 else data.hex()}")
     
     def send_buffered_data(self):
         """Send buffered data via HTTP POST"""
@@ -205,8 +208,16 @@ class SinglePortHTTPForwarder:
             
             # Get data to send
             data_to_send = bytes(self.buffer)
+            buffer_size = len(self.buffer)
             self.buffer.clear()
             self.last_data_time = None
+        
+        # Verify data integrity
+        if len(data_to_send) != buffer_size:
+            logger.error(f"[{self.port_name}] Data length mismatch! Buffer: {buffer_size}, Converted: {len(data_to_send)}")
+        else:
+            logger.info(f"[{self.port_name}] Prepared {len(data_to_send)} bytes for sending")
+            logger.debug(f"[{self.port_name}] Data checksum: {sum(data_to_send) % 256}")
         
         # Add to pending messages database
         self._add_pending_message(data_to_send)
@@ -223,10 +234,15 @@ class SinglePortHTTPForwarder:
                 'Content-Type': 'application/octet-stream',
                 'X-TCP-Host': self.tcp_host,
                 'X-TCP-Port': str(self.tcp_port),
-                'X-Source-Port': self.port_name
+                'X-Source-Port': self.port_name,
+                'X-Data-Length': str(len(data_to_send)),
+                'X-Data-Checksum': str(sum(data_to_send) % 256)
             }
             
-            logger.info(f"[{self.port_name}] Sending {len(data_to_send)} bytes to {self.http_url} -> {self.tcp_host}:{self.tcp_port}")
+            logger.info(f"[{self.port_name}] Sending message ID {message_id}: {len(data_to_send)} bytes to {self.http_url} -> {self.tcp_host}:{self.tcp_port}")
+            logger.info(f"[{self.port_name}] Sending message {data_to_send}")
+           
+            logger.debug(f"[{self.port_name}] Data checksum: {sum(data_to_send) % 256}")
             
             response = requests.post(
                 self.http_url,
@@ -236,7 +252,17 @@ class SinglePortHTTPForwarder:
             )
             
             if response.status_code == 200:
-                # Success - remove from database and set flag
+                # Success - verify response and remove from database
+                try:
+                    response_data = response.json()
+                    bytes_sent = response_data.get('bytes_sent', 0)
+                    if bytes_sent != len(data_to_send):
+                        logger.warning(f"[{self.port_name}] Length mismatch! Sent: {len(data_to_send)}, Confirmed: {bytes_sent}")
+                    else:
+                        logger.info(f"[{self.port_name}] Verified: {bytes_sent} bytes sent successfully")
+                except:
+                    logger.debug(f"[{self.port_name}] Response: {response.text}")
+                
                 self._remove_pending_message(message_id)
                 
                 # Check if all messages sent

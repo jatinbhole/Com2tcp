@@ -44,14 +44,17 @@ class TCPForwarder:
             sock.connect((self.host, self.port))
             logger.info(f"Connected to {self.host}:{self.port}")
             
-            # Send data
+            # Send data with validation
+            data_length = len(self.data)
             sock.sendall(self.data)
-            logger.info(f"Sent {len(self.data)} bytes to {self.host}:{self.port}")
+            logger.info(f"Sent Data {self.data} ")
+            logger.info(f"Sent {data_length} bytes to {self.host}:{self.port}")
+            logger.debug(f"Data checksum: {sum(self.data) % 256}")
             
             # Close connection
             sock.close()
             
-            self.result = f"Successfully sent {len(self.data)} bytes to {self.host}:{self.port}"
+            self.result = f"Successfully sent {data_length} bytes to {self.host}:{self.port}"
             return True
             
         except socket.timeout:
@@ -92,6 +95,29 @@ def forward_data():
         tcp_host = request.headers.get('X-TCP-Host', 'localhost')
         tcp_port_str = request.headers.get('X-TCP-Port')
         source_port = request.headers.get('X-Source-Port', 'unknown')
+        expected_length = request.headers.get('X-Data-Length')
+        expected_checksum = request.headers.get('X-Data-Checksum')
+        
+        # Validate data length if provided
+        actual_length = len(data_bytes)
+        if expected_length:
+            expected_length = int(expected_length)
+            if actual_length != expected_length:
+                logger.error(f"Data length mismatch from {source_port}! Expected: {expected_length}, Received: {actual_length}")
+                return jsonify({
+                    'error': f'Data length mismatch. Expected: {expected_length}, Received: {actual_length}'
+                }), 400
+        
+        # Validate checksum if provided
+        if expected_checksum:
+            actual_checksum = sum(data_bytes) % 256
+            expected_checksum = int(expected_checksum)
+            if actual_checksum != expected_checksum:
+                logger.error(f"Data checksum mismatch from {source_port}! Expected: {expected_checksum}, Actual: {actual_checksum}")
+                return jsonify({
+                    'error': f'Data checksum mismatch. Expected: {expected_checksum}, Actual: {actual_checksum}'
+                }), 400
+            logger.debug(f"Checksum validated: {actual_checksum}")
         
         # Validate required fields
         if not tcp_port_str:
