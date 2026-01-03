@@ -10,7 +10,7 @@
             "serial_timeout": 1,
             "serial_xonxoff": true,
             "serial_rtscts": false,
-            "http_url": "http://localhost:5000/forward",
+            "http_url": "http://192.168.0.10:5000/forward",
             "tcp_host": "192.168.0.10",
             "tcp_port": 8090,
             "buffer_size": 10000,

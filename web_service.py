@@ -14,6 +14,7 @@ import threading
 import logging
 import json
 import os
+import serial.tools.list_ports
 
 # Check Python version - 3.8 or 3.9
 if sys.version_info < (3, 8) or sys.version_info >= (3, 10):
@@ -169,6 +170,24 @@ def get_port_status(port_name):
 
 
 
+@app.route('/api/serial_ports')
+def get_serial_ports():
+    """Get list of available serial ports"""
+    try:
+        ports = serial.tools.list_ports.comports()
+        port_list = []
+        for port in ports:
+            port_list.append({
+                'device': port.device,
+                'description': port.description,
+                'hwid': port.hwid
+            })
+        return jsonify({'ports': port_list})
+    except Exception as e:
+        logger.error(f"Error listing serial ports: {e}")
+        return jsonify({'ports': [], 'error': str(e)})
+
+
 @app.route('/api/config', methods=['GET'])
 def get_config():
     """Get current configuration"""
@@ -176,14 +195,13 @@ def get_config():
         if multi_forwarder:
             return jsonify(multi_forwarder.config)
         else:
-            # Return default config
-            temp_forwarder = MultiPortForwarder()
-            return jsonify(temp_forwarder.get_default_config())
+            # Return default empty config
+            return jsonify({'ports': []})
 
 
 @app.route('/api/config', methods=['POST'])
 def update_config():
-    """Update configuration (restart ONLY if config changed)"""
+    """Update configuration and save to config.json"""
     try:
         new_config = request.get_json()
 
@@ -198,7 +216,7 @@ def update_config():
             return jsonify({'success': False, 'error': 'At least one port must be configured'}), 400
 
         for port in ports:
-            required_fields = ['name', 'serial_port', 'serial_baudrate', 'tcp_host', 'tcp_port']
+            required_fields = ['name', 'serial_port', 'serial_baudrate', 'http_url', 'tcp_host', 'tcp_port']
             for field in required_fields:
                 if field not in port:
                     return jsonify({
@@ -213,12 +231,12 @@ def update_config():
             # Load current config from disk (source of truth)
             # ------------------------------------------
             current_config = None
-            if multi_forwarder:
-                try:
-                    with open(multi_forwarder.config_file, 'r') as f:
-                        current_config = json.load(f)
-                except Exception:
-                    current_config = None
+            config_file = 'config.json'
+            try:
+                with open(config_file, 'r') as f:
+                    current_config = json.load(f)
+            except Exception:
+                current_config = None
 
             # ------------------------------------------
             #  CRITICAL FIX: normalized comparison
@@ -237,23 +255,32 @@ def update_config():
             # ------------------------------------------
             was_running = False
             if multi_forwarder:
-                was_running = any(
-                    f.running for f in multi_forwarder.forwarders.values()
-                )
+                was_running = multi_forwarder.running
+                logger.info("Stopping existing forwarder...")
                 multi_forwarder.stop()
 
             # ------------------------------------------
-            # Save new config
+            # Save new config to file
             # ------------------------------------------
-            if not multi_forwarder:
-                multi_forwarder = MultiPortForwarder()
+            try:
+                with open(config_file, 'w') as f:
+                    json.dump(new_config, f, indent=4)
+                logger.info(f"Configuration saved to {config_file}")
+            except Exception as e:
+                logger.error(f"Error saving config file: {e}")
+                return jsonify({'success': False, 'error': f'Failed to save config: {str(e)}'}), 500
 
-            multi_forwarder.save_config(new_config)
+            # ------------------------------------------
+            # Create new forwarder with updated config
+            # ------------------------------------------
+            multi_forwarder = MultiPortHTTPForwarder(new_config)
+            set_forwarder(multi_forwarder)
 
             # ------------------------------------------
             # Restart ONLY if previously running
             # ------------------------------------------
             if was_running:
+                logger.info("Restarting forwarder with new configuration...")
                 multi_forwarder.start()
 
         return jsonify({
