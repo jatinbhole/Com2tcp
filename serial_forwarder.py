@@ -28,10 +28,10 @@ from collections import deque
 from datetime import datetime
 
 # Check Python version - 3.8 only
-if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
-    print("Error: Python 3.8 only is required")
-    print(f"Current version: {sys.version}")
-    sys.exit(1)
+#if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
+#    print("Error: Python 3.8 only is required")
+#    print(f"Current version: {sys.version}")
+#    sys.exit(1)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -549,13 +549,20 @@ class SinglePortForwarder:
         while self.running:
             if not self.serial_connected:
                 if not self.connect_serial():
-                    if self.running:  # Only sleep if still running
-                        time.sleep(reconnect_interval)
+                    # Use small sleep intervals to be more responsive to shutdown
+                    for _ in range(int(reconnect_interval * 10)):
+                        if not self.running:
+                            break
+                        time.sleep(0.1)
                     continue
             
             try:
                 if not self.running:  # Check if we should stop
                     break
+                
+                # Set timeout on serial port to avoid blocking indefinitely
+                if self.serial_port and hasattr(self.serial_port, 'timeout'):
+                    self.serial_port.timeout = 0.1
                 
                 # Read incoming serial data and accumulate it
                 if self.serial_port and self.serial_port.in_waiting > 0:
@@ -656,9 +663,17 @@ class SinglePortForwarder:
 
             if not self.tcp_connected and self.running:
                 self.connect_tcp()
-                time.sleep(reconnect_interval)
+                # Use small sleep intervals to be more responsive to shutdown
+                for _ in range(int(reconnect_interval * 10)):
+                    if not self.running:
+                        break
+                    time.sleep(0.1)
             else:
-                time.sleep(1)
+                # Use small sleep intervals for responsiveness
+                for _ in range(10):
+                    if not self.running:
+                        break
+                    time.sleep(0.1)
 
         logger.info(f"[{self.port_name}] TCP reconnect thread stopped")
 
@@ -676,11 +691,18 @@ class SinglePortForwarder:
                 # Save buffer after cleanup
                 self.save_buffer()
                 
-                time.sleep(cleanup_interval)
+                # Use small sleep intervals to be more responsive to shutdown
+                for _ in range(int(cleanup_interval * 10)):
+                    if not self.running:
+                        break
+                    time.sleep(0.1)
             except Exception as e:
                 if self.running:  # Only log if not shutting down
                     logger.error(f"[{self.port_name}] Error in cleanup thread: {e}")
-                    time.sleep(cleanup_interval)
+                    for _ in range(int(cleanup_interval * 10)):
+                        if not self.running:
+                            break
+                        time.sleep(0.1)
         
         logger.info(f"[{self.port_name}] Buffer cleanup thread stopped")
     
@@ -693,10 +715,10 @@ class SinglePortForwarder:
         logger.info(f"[{self.port_name}] Starting forwarder")
         self.running = True
         
-        # Start threads
-        serial_thread = threading.Thread(target=self.serial_reader_thread, daemon=True)
-        tcp_thread = threading.Thread(target=self.tcp_reconnect_thread, daemon=True)
-        cleanup_thread = threading.Thread(target=self.cleanup_thread, daemon=True)
+        # Start threads - NOT daemon so they can finish properly on shutdown
+        serial_thread = threading.Thread(target=self.serial_reader_thread, daemon=False, name=f"{self.port_name}_serial")
+        tcp_thread = threading.Thread(target=self.tcp_reconnect_thread, daemon=False, name=f"{self.port_name}_tcp")
+        cleanup_thread = threading.Thread(target=self.cleanup_thread, daemon=False, name=f"{self.port_name}_cleanup")
         
         self.threads = [serial_thread, tcp_thread, cleanup_thread]
         
@@ -721,10 +743,11 @@ class SinglePortForwarder:
         logger.debug(f"[{self.port_name}] Waiting for {len(self.threads)} threads to finish")
         for i, thread in enumerate(self.threads, 1):
             if thread.is_alive():
-                logger.debug(f"[{self.port_name}] Waiting for thread {i}/{len(self.threads)}")
-                thread.join(timeout=5)  # Increased timeout
+                thread_name = thread.name if hasattr(thread, 'name') else f"Thread {i}"
+                logger.debug(f"[{self.port_name}] Waiting for {thread_name} ({i}/{len(self.threads)})")
+                thread.join(timeout=3)  # 3 second timeout per thread
                 if thread.is_alive():
-                    logger.warning(f"[{self.port_name}] Thread {i} did not stop within timeout")
+                    logger.warning(f"[{self.port_name}] {thread_name} did not stop within timeout")
         
         logger.info(f"[{self.port_name}] All threads stopped")
         

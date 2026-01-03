@@ -16,10 +16,10 @@ import atexit
 import os
 
 # Check Python version - 3.8 only
-if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
-    print("Error: Python 3.8 only is required")
-    print(f"Current version: {sys.version}")
-    sys.exit(1)
+#if sys.version_info < (3, 8) or sys.version_info >= (3, 9):
+#    print("Error: Python 3.8 only is required")
+#    print(f"Current version: {sys.version}")
+#    sys.exit(1)
 
 from serial_forwarder import MultiPortForwarder
 #from web_service import app
@@ -41,6 +41,7 @@ class ServiceRunner:
         set_forwarder(self.forwarder)
         self.flask_thread = None
         self.forwarder_thread = None
+        self.server = None  # Werkzeug server instance
         self.shutdown_event = threading.Event()
         self.shutdown_lock = threading.Lock()
         
@@ -62,16 +63,12 @@ class ServiceRunner:
         try:
             logger.info("Starting Web Service on 0.0.0.0:8081")
             # Disable Flask's default signal handlers to use our own
-            app.run(
-                host='0.0.0.0',
-                port=9001,
-                debug=False,
-                use_reloader=False,
-                use_debugger=False,
-                threaded=True
-            )
+            from werkzeug.serving import make_server
+            self.server = make_server('0.0.0.0', 9001, app, threaded=True)
+            self.server.serve_forever()
         except Exception as e:
-            logger.error(f"Error in web service: {e}")
+            if self.running:  # Only log if not shutting down
+                logger.error(f"Error in web service: {e}")
         finally:
             logger.info("Web Service stopped")
     
@@ -107,8 +104,17 @@ class ServiceRunner:
             # Give forwarder time to initialize
             time.sleep(2)
             
-            # Start Web Service (blocking)
-            self.run_web_service()
+            # Start Web Service in a thread
+            self.flask_thread = threading.Thread(
+                target=self.run_web_service,
+                daemon=False,
+                name="FlaskThread"
+            )
+            self.flask_thread.start()
+            
+            # Wait for both threads
+            while self.running:
+                time.sleep(0.5)
         
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
@@ -130,7 +136,7 @@ class ServiceRunner:
             logger.info("Starting graceful shutdown sequence...")
             logger.info("=" * 70)
             
-            # Stop Serial Forwarder
+            # Stop Serial Forwarder first (most important)
             try:
                 logger.info("Stopping Serial Forwarder...")
                 if self.forwarder:
@@ -142,9 +148,28 @@ class ServiceRunner:
             # Wait for forwarder thread to finish
             if self.forwarder_thread and self.forwarder_thread.is_alive():
                 logger.info("Waiting for Forwarder thread to finish...")
-                self.forwarder_thread.join(timeout=5)
+                self.forwarder_thread.join(timeout=3)
                 if self.forwarder_thread.is_alive():
                     logger.warning("Forwarder thread did not stop within timeout")
+            
+            # Stop Web Service
+            try:
+                logger.info("Stopping Web Service...")
+                if self.server:
+                    # Shutdown in a separate thread to avoid blocking
+                    shutdown_thread = threading.Thread(target=self.server.shutdown, daemon=True)
+                    shutdown_thread.start()
+                    shutdown_thread.join(timeout=2)
+                logger.info("Web Service stopped successfully")
+            except Exception as e:
+                logger.error(f"Error stopping web service: {e}")
+            
+            # Wait for flask thread to finish
+            if self.flask_thread and self.flask_thread.is_alive():
+                logger.info("Waiting for Flask thread to finish...")
+                self.flask_thread.join(timeout=2)
+                if self.flask_thread.is_alive():
+                    logger.warning("Flask thread did not stop within timeout")
             
             logger.info("=" * 70)
             logger.info("All services stopped gracefully")
