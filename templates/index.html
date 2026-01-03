@@ -335,6 +335,10 @@
                     <div>
                         <h3 style="margin-bottom: 15px; color: #667eea;">TCP Settings</h3>
                         <div class="form-group">
+                            <label for="httpUrl">HTTP URL:</label>
+                            <input type="text" id="httpUrl" name="http_url" placeholder="http://localhost:5000/forward">
+                        </div>
+                        <div class="form-group">
                             <label for="tcpHost">TCP Host:</label>
                             <input type="text" id="tcpHost" name="tcp_host" placeholder="localhost" required>
                         </div>
@@ -428,6 +432,7 @@
                     document.getElementById('bytesize').value = config.serial_bytesize || 8;
                     document.getElementById('parity').value = config.serial_parity || 'N';
                     document.getElementById('stopbits').value = config.serial_stopbits || 1;
+                    document.getElementById('httpUrl').value = config.http_url || '';
                     document.getElementById('tcpHost').value = config.tcp_host || '';
                     document.getElementById('tcpPort').value = config.tcp_port || 5000;
                     document.getElementById('bufferSize').value = config.buffer_size || 10000;

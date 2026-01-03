@@ -783,6 +783,10 @@
                         </div>
                         
                         <div class="form-group">
+                            <label>HTTP URL:</label>
+                            <input type="text" class="http-url-${index}" value="${port.http_url || ''}" placeholder="http://localhost:5000/forward">
+                        </div>
+                        <div class="form-group">
                             <label>TCP Host:</label>
                             <input type="text" class="tcp-host-${index}" value="${port.tcp_host}" placeholder="localhost">
                         </div>
@@ -840,6 +844,7 @@
                 serial_timeout: 1,
                 serial_xonxoff: true,
                 serial_rtscts: false,
+                http_url: 'http://localhost:5000/forward',
                 tcp_host: 'localhost',
                 tcp_port: 5000,
                 buffer_size: 10000,
@@ -913,6 +918,7 @@
                         serial_timeout: parseFloat(timeoutEl ? timeoutEl.value : 1),
                         serial_xonxoff: xonxoffEl ? xonxoffEl.value === 'true' : true,
                         serial_rtscts: rtsctsEl ? rtsctsEl.value === 'true' : false,
+                        http_url: document.querySelector(`.http-url-${i}`).value.trim(),
                         tcp_host: tcpHostEl.value.trim(),
                         //tcp_port: parseInt(tcpPortEl.value),
                         tcp_port: parseInt(tcpPortEl.value) || 0,
