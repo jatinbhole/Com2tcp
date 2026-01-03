@@ -10,6 +10,8 @@ import json
 import logging
 from datetime import datetime
 import requests
+import sqlite3
+import os
 
 # Check Python version - 3.8 or 3.9
 if sys.version_info < (3, 8) or sys.version_info >= (3, 10):
@@ -43,6 +45,13 @@ class SinglePortHTTPForwarder:
         self.last_data_time = None
         self.buffer_timeout = 5.0  # 5 seconds
         
+        # Persistent SQLite buffer table for retry mechanism
+        self.db_path = f'buffer_{port_name}.db'
+        self.db_lock = threading.Lock()
+        self.retry_interval = 30.0  # 30 seconds
+        self.send_success_flag = False
+        self._init_database()
+        
         # Status tracking
         self.status = {
             'port_name': port_name,
@@ -60,6 +69,84 @@ class SinglePortHTTPForwarder:
         # Control flags
         self.running = False
         self.threads = []
+    
+    def _init_database(self):
+        """Initialize SQLite database for persistent buffer storage"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pending_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp REAL NOT NULL,
+                        data BLOB NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                conn.commit()
+                conn.close()
+                
+                # Log pending messages count
+                pending_count = self._get_pending_count()
+                if pending_count > 0:
+                    logger.info(f"[{self.port_name}] Loaded {pending_count} pending messages from database")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error initializing database: {e}")
+    
+    def _get_pending_count(self):
+        """Get count of pending messages in database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM pending_messages')
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error getting pending count: {e}")
+            return 0
+    
+    def _add_pending_message(self, data_bytes):
+        """Add a message to the pending buffer in database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('INSERT INTO pending_messages (timestamp, data) VALUES (?, ?)',
+                             (time.time(), data_bytes))
+                conn.commit()
+                conn.close()
+                logger.debug(f"[{self.port_name}] Added message to pending buffer")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error adding pending message: {e}")
+    
+    def _remove_pending_message(self, message_id):
+        """Remove a successfully sent message from database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM pending_messages WHERE id = ?', (message_id,))
+                conn.commit()
+                conn.close()
+                logger.debug(f"[{self.port_name}] Removed message {message_id} from pending buffer")
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error removing pending message: {e}")
+    
+    def _get_pending_messages(self):
+        """Get all pending messages from database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('SELECT id, timestamp, data FROM pending_messages ORDER BY timestamp')
+                messages = cursor.fetchall()
+                conn.close()
+                return messages
+        except Exception as e:
+            logger.error(f"[{self.port_name}] Error getting pending messages: {e}")
+            return []
     
     def connect_serial(self):
         """Connect to serial port"""
@@ -121,6 +208,14 @@ class SinglePortHTTPForwarder:
             self.buffer.clear()
             self.last_data_time = None
         
+        # Add to pending messages database
+        self._add_pending_message(data_to_send)
+        
+        # Try to send all pending messages
+        self._send_pending_messages()
+    
+    def _send_to_http(self, message_id, data_to_send):
+        """Internal method to send data via HTTP POST"""
         # Send via HTTP POST
         try:
             # Send raw binary data with metadata in headers
@@ -141,15 +236,37 @@ class SinglePortHTTPForwarder:
             )
             
             if response.status_code == 200:
+                # Success - remove from database and set flag
+                self._remove_pending_message(message_id)
+                
+                # Check if all messages sent
+                if self._get_pending_count() == 0:
+                    self.send_success_flag = True
+                
                 self.update_status('messages_sent', self.status['messages_sent'] + 1)
                 logger.info(f"[{self.port_name}] Successfully sent data. Response: {response.text}")
+                return True
             else:
                 logger.error(f"[{self.port_name}] HTTP POST failed with status {response.status_code}: {response.text}")
                 self.update_status('last_error', f"HTTP POST failed: {response.status_code}")
+                self.send_success_flag = False
+                return False
                 
         except Exception as e:
             logger.error(f"[{self.port_name}] Error sending data via HTTP POST: {e}")
             self.update_status('last_error', f"HTTP POST error: {str(e)}")
+            self.send_success_flag = False
+            return False
+    
+    def _send_pending_messages(self):
+        """Send all pending messages from database"""
+        messages = self._get_pending_messages()
+        
+        if messages:
+            logger.debug(f"[{self.port_name}] Attempting to send {len(messages)} pending messages")
+            
+            for message_id, timestamp, data in messages:
+                self._send_to_http(message_id, data)
     
     def serial_reader_thread(self):
         """Thread to read data from serial port"""
@@ -218,6 +335,31 @@ class SinglePortHTTPForwarder:
         
         logger.info(f"[{self.port_name}] Buffer timeout thread stopped")
     
+    def retry_pending_messages_thread(self):
+        """Thread to retry sending pending messages every 30 seconds"""
+        logger.info(f"[{self.port_name}] Retry pending messages thread started")
+        
+        while self.running:
+            try:
+                time.sleep(self.retry_interval)
+                
+                messages = self._get_pending_messages()
+                
+                if messages:
+                    logger.info(f"[{self.port_name}] Retrying {len(messages)} pending messages")
+                    
+                    for message_id, timestamp, data in messages:
+                        age = time.time() - timestamp
+                        logger.info(f"[{self.port_name}] Retrying message ID {message_id} ({len(data)} bytes, age: {age:.1f}s)")
+                        self._send_to_http(message_id, data)
+                
+            except Exception as e:
+                if self.running:
+                    logger.error(f"[{self.port_name}] Error in retry thread: {e}")
+                    time.sleep(1)
+        
+        logger.info(f"[{self.port_name}] Retry pending messages thread stopped")
+    
     def start(self):
         """Start the forwarder for this port"""
         if self.running:
@@ -230,8 +372,9 @@ class SinglePortHTTPForwarder:
         # Start threads
         serial_thread = threading.Thread(target=self.serial_reader_thread, daemon=True)
         timeout_thread = threading.Thread(target=self.buffer_timeout_thread, daemon=True)
+        retry_thread = threading.Thread(target=self.retry_pending_messages_thread, daemon=True)
         
-        self.threads = [serial_thread, timeout_thread]
+        self.threads = [serial_thread, timeout_thread, retry_thread]
         
         for thread in self.threads:
             thread.start()
