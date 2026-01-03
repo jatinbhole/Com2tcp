@@ -71,41 +71,37 @@ class TCPForwarder:
 @app.route('/forward', methods=['POST'])
 def forward_data():
     """
-    Receive POST request with data and TCP port, then forward to TCP
+    Receive POST request with raw binary data and TCP port info in headers
     
-    Expected JSON payload:
-    {
-        "data": "hex_encoded_string",
-        "tcp_port": 8090,
-        "tcp_host": "192.168.21.18" (optional, defaults to localhost)
-        "source_port": "port1" (optional, for logging)
-    }
+    Expected headers:
+        Content-Type: application/octet-stream
+        X-TCP-Host: target host (optional, defaults to localhost)
+        X-TCP-Port: target port (required)
+        X-Source-Port: source identifier (optional, for logging)
+    
+    Body: raw binary data
     """
     try:
-        # Get JSON data
-        json_data = request.get_json()
+        # Get binary data from request body
+        data_bytes = request.get_data()
         
-        if not json_data:
-            return jsonify({'error': 'No JSON data provided'}), 400
+        if not data_bytes:
+            return jsonify({'error': 'No data provided in request body'}), 400
         
-        # Extract parameters
-        hex_data = json_data.get('data')
-        tcp_port = json_data.get('tcp_port')
-        tcp_host = json_data.get('tcp_host', 'localhost')
-        source_port = json_data.get('source_port', 'unknown')
+        # Extract parameters from headers
+        tcp_host = request.headers.get('X-TCP-Host', 'localhost')
+        tcp_port_str = request.headers.get('X-TCP-Port')
+        source_port = request.headers.get('X-Source-Port', 'unknown')
         
         # Validate required fields
-        if not hex_data:
-            return jsonify({'error': 'Missing "data" field'}), 400
+        if not tcp_port_str:
+            return jsonify({'error': 'Missing "X-TCP-Port" header'}), 400
         
-        if not tcp_port:
-            return jsonify({'error': 'Missing "tcp_port" field'}), 400
-        
-        # Convert hex string to bytes
+        # Convert port to integer
         try:
-            data_bytes = bytes.fromhex(hex_data)
-        except ValueError as e:
-            return jsonify({'error': f'Invalid hex data: {str(e)}'}), 400
+            tcp_port = int(tcp_port_str)
+        except ValueError:
+            return jsonify({'error': 'Invalid port number'}), 400
         
         logger.info(f"Received request from {source_port}: {len(data_bytes)} bytes to {tcp_host}:{tcp_port}")
         
@@ -156,13 +152,13 @@ def index():
         'usage': {
             'url': '/forward',
             'method': 'POST',
-            'content_type': 'application/json',
-            'body': {
-                'data': 'hex_encoded_string (required)',
-                'tcp_port': 'target_port_number (required)',
-                'tcp_host': 'target_host (optional, default: localhost)',
-                'source_port': 'source_identifier (optional)'
-            }
+            'content_type': 'application/octet-stream',
+            'headers': {
+                'X-TCP-Port': 'target_port_number (required)',
+                'X-TCP-Host': 'target_host (optional, default: localhost)',
+                'X-Source-Port': 'source_identifier (optional)'
+            },
+            'body': 'raw binary data'
         }
     }), 200
 

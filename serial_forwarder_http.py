@@ -123,21 +123,20 @@ class SinglePortHTTPForwarder:
         
         # Send via HTTP POST
         try:
-            # Encode data as hex string for JSON transmission
-            data_hex = data_to_send.hex()
-            
-            payload = {
-                'data': data_hex,
-                'datahost': self.tcp_host,
-                'tcp_port': self.tcp_port,
-                'source_port': self.port_name
+            # Send raw binary data with metadata in headers
+            headers = {
+                'Content-Type': 'application/octet-stream',
+                'X-TCP-Host': self.tcp_host,
+                'X-TCP-Port': str(self.tcp_port),
+                'X-Source-Port': self.port_name
             }
             
             logger.info(f"[{self.port_name}] Sending {len(data_to_send)} bytes to {self.http_url} -> {self.tcp_host}:{self.tcp_port}")
             
             response = requests.post(
                 self.http_url,
-                json=payload,
+                data=data_to_send,
+                headers=headers,
                 timeout=10
             )
             
